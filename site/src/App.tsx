@@ -1,6 +1,12 @@
-import { useEffect, useState } from 'react';
-import type { ScreenerFeed, ScreenerBar } from './types';
-import { RegimeBadge, GateBadge, ConfidenceBar, FeaturePills } from './components';
+import { useState, useCallback } from 'react';
+import type { TodayResult, ScreenerBar, RawBar, LoadingState, HistoryRange } from './types';
+import { RegimeBadge, GateBadge, ConfidenceBar, FeaturePills, formatPrice } from './components';
+import { SymbolSearch, QuickPicks } from './search';
+import { TodayCard, TodayCardSkeleton } from './today-card';
+import { BYOD } from './byod';
+import { classifyToday, classifyBYOD, fetchHistory } from './api';
+
+/* ── Formatting helpers ── */
 
 function formatDate(ts: number): string {
   return new Date(ts * 1000).toLocaleDateString('en-US', {
@@ -8,10 +14,6 @@ function formatDate(ts: number): string {
     day: 'numeric',
     year: '2-digit',
   });
-}
-
-function formatPrice(n: number): string {
-  return n.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 }
 
 function formatVolume(v: number): string {
@@ -25,32 +27,77 @@ function pctChange(bar: ScreenerBar, prev?: ScreenerBar): number | null {
   return ((bar.c - prev.c) / prev.c) * 100;
 }
 
-export default function App() {
-  const [feed, setFeed] = useState<ScreenerFeed | null>(null);
-  const [expanded, setExpanded] = useState<number | null>(null);
+/* ── App ── */
 
-  useEffect(() => {
-    fetch('/spy-screener.json')
-      .then((r) => r.json())
-      .then((d: ScreenerFeed) => setFeed(d));
+export default function App() {
+  const [symbol, setSymbol] = useState<string | null>(null);
+  const [today, setToday] = useState<TodayResult | null>(null);
+  const [history, setHistory] = useState<ScreenerBar[] | null>(null);
+  const [historyRange, setHistoryRange] = useState<HistoryRange>('1y');
+  const [loading, setLoading] = useState<LoadingState>('idle');
+  const [expanded, setExpanded] = useState<number | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  const handleSelectSymbol = useCallback(async (sym: string) => {
+    setSymbol(sym);
+    setToday(null);
+    setHistory(null);
+    setError(null);
+    setLoading('classifying');
+    try {
+      const result = await classifyToday(sym);
+      setToday(result);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Classification failed');
+    } finally {
+      setLoading('idle');
+    }
   }, []);
 
-  if (!feed) {
-    return (
-      <div className="flex h-screen items-center justify-center">
-        <div className="text-zinc-500 font-mono text-sm">Loading screener data...</div>
-      </div>
-    );
-  }
+  const handleBYOD = useCallback(async (bars: RawBar[]) => {
+    setSymbol('BYOD');
+    setToday(null);
+    setHistory(null);
+    setError(null);
+    setLoading('classifying');
+    try {
+      const result = await classifyBYOD(bars);
+      setToday(result);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'BYOD classification failed');
+    } finally {
+      setLoading('idle');
+    }
+  }, []);
 
-  const bars = [...feed.bars].reverse();
-  const latest = bars[0];
-  const regimeCounts: Record<string, number> = {};
-  const gateCounts: Record<string, number> = {};
-  for (const b of feed.bars) {
-    regimeCounts[b.regime] = (regimeCounts[b.regime] || 0) + 1;
-    gateCounts[b.gate] = (gateCounts[b.gate] || 0) + 1;
-  }
+  const handleViewHistory = useCallback(async () => {
+    if (!symbol || symbol === 'BYOD') return;
+    setLoading('history');
+    setError(null);
+    try {
+      const bars = await fetchHistory(symbol, historyRange);
+      setHistory(bars);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to load history');
+    } finally {
+      setLoading('idle');
+    }
+  }, [symbol, historyRange]);
+
+  const handleRangeChange = useCallback(async (range: HistoryRange) => {
+    setHistoryRange(range);
+    if (!symbol || symbol === 'BYOD') return;
+    setLoading('history');
+    setError(null);
+    try {
+      const bars = await fetchHistory(symbol, range);
+      setHistory(bars);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to load history');
+    } finally {
+      setLoading('idle');
+    }
+  }, [symbol]);
 
   return (
     <div className="min-h-screen bg-bg">
@@ -61,10 +108,11 @@ export default function App() {
             <h1 className="text-white font-semibold text-lg tracking-tight">
               Jev Regime Screener
             </h1>
-            <span className="text-xs text-zinc-500 bg-zinc-900 px-2 py-0.5 rounded-full border border-border font-mono">
-              {feed.symbol}
-            </span>
-            <span className="text-xs text-zinc-600 font-mono">{feed.interval}</span>
+            {symbol && symbol !== 'BYOD' && (
+              <span className="text-xs text-zinc-500 bg-zinc-900 px-2 py-0.5 rounded-full border border-border font-mono">
+                {symbol}
+              </span>
+            )}
           </div>
           <div className="hidden sm:flex items-center gap-4 text-xs text-zinc-500">
             <span>
@@ -91,66 +139,88 @@ export default function App() {
         </div>
       </header>
 
-      {/* Summary strip */}
-      <div className="border-b border-border bg-surface/30 overflow-x-auto">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 py-3 flex items-center gap-4 sm:gap-6 text-xs min-w-max sm:min-w-0">
-          <div>
-            <span className="text-zinc-500">Latest</span>{' '}
-            <span className="text-white font-mono font-medium">${formatPrice(latest.c)}</span>
-          </div>
-          <div>
-            <span className="text-zinc-500">Regime</span>{' '}
-            <RegimeBadge regime={latest.regime} />
-          </div>
-          <div>
-            <span className="text-zinc-500">Conf</span>{' '}
-            <span className="text-white font-mono">{(latest.maxP * 100).toFixed(0)}%</span>
-          </div>
-          <div>
-            <span className="text-zinc-500">Gate</span> <GateBadge gate={latest.gate} />
-          </div>
-          <div className="ml-auto text-zinc-600 whitespace-nowrap">
-            {feed.bars.length} sessions &middot; {feed.vendor} &middot; <span className="hidden sm:inline">Research experiment, n</span><span className="sm:hidden">N</span>ot investment advice
-          </div>
+      <main className="max-w-7xl mx-auto px-4 sm:px-6 py-6">
+        {/* Search */}
+        <div className="flex flex-col items-center gap-2">
+          <SymbolSearch
+            onSelect={handleSelectSymbol}
+            loading={loading === 'searching' || loading === 'classifying'}
+          />
+          <BYOD onBars={handleBYOD} loading={loading === 'classifying'} />
         </div>
-      </div>
 
-      {/* Data grid */}
-      <main className="max-w-7xl mx-auto px-4 sm:px-6 py-4">
-        <div className="rounded-lg border border-border overflow-x-auto">
-          <table className="w-full text-sm min-w-[700px]">
-            <thead>
-              <tr className="bg-surface text-zinc-500 text-xs uppercase tracking-wider">
-                <th className="px-3 py-2.5 text-left font-medium">Date</th>
-                <th className="px-3 py-2.5 text-right font-medium">Close</th>
-                <th className="px-3 py-2.5 text-right font-medium">Chg%</th>
-                <th className="px-3 py-2.5 text-right font-medium">Vol</th>
-                <th className="px-3 py-2.5 text-center font-medium">Regime</th>
-                <th className="px-3 py-2.5 text-center font-medium">Conf</th>
-                <th className="px-3 py-2.5 text-center font-medium">Change?</th>
-                <th className="px-3 py-2.5 text-center font-medium">Viable?</th>
-                <th className="px-3 py-2.5 text-center font-medium">Gate</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-border/50">
-              {bars.map((bar, i) => {
-                const prevBar = i < bars.length - 1 ? bars[i + 1] : undefined;
-                const chg = pctChange(bar, prevBar);
-                const isExpanded = expanded === bar.t;
+        {/* Phase 1: Empty state */}
+        {!symbol && loading === 'idle' && (
+          <div className="mt-8 text-center">
+            <p className="text-zinc-500 text-sm max-w-md mx-auto">
+              Type any ticker to see its Jev regime classification.
+            </p>
+            <p className="text-zinc-600 text-xs mt-2">
+              Data from Yahoo Finance EOD &middot; Classified by TypeSafe Jev &middot; Not investment advice
+            </p>
+            <QuickPicks onSelect={handleSelectSymbol} />
+          </div>
+        )}
 
-                return (
-                  <ScreenerRow
-                    key={bar.t}
-                    bar={bar}
-                    chg={chg}
-                    isExpanded={isExpanded}
-                    onToggle={() => setExpanded(isExpanded ? null : bar.t)}
-                  />
-                );
-              })}
-            </tbody>
-          </table>
-        </div>
+        {/* Error */}
+        {error && (
+          <div className="mt-6 max-w-2xl mx-auto px-4 py-3 rounded-lg border border-matchstick/30 bg-matchstick/5 text-matchstick text-sm font-mono text-center">
+            {error}
+          </div>
+        )}
+
+        {/* Phase 2: Classifying skeleton */}
+        {loading === 'classifying' && (
+          <div className="mt-6">
+            <TodayCardSkeleton />
+          </div>
+        )}
+
+        {/* Phase 2: Today's snapshot */}
+        {today && loading !== 'classifying' && (
+          <div className="mt-6">
+            <TodayCard result={today} onViewHistory={handleViewHistory} />
+          </div>
+        )}
+
+        {/* Phase 3: History loading */}
+        {loading === 'history' && (
+          <div className="mt-6 text-center">
+            <div className="inline-flex items-center gap-2 text-zinc-500 text-sm font-mono">
+              <div className="w-4 h-4 border-2 border-matchstick/30 border-t-matchstick rounded-full animate-spin" />
+              Classifying historical bars...
+            </div>
+          </div>
+        )}
+
+        {/* Phase 3: History grid */}
+        {history && history.length > 0 && loading !== 'history' && (
+          <div className="mt-6">
+            {/* Range selector */}
+            <div className="flex items-center gap-2 mb-3">
+              <span className="text-zinc-500 text-xs font-medium">Range:</span>
+              {(['1y', '3y'] as const).map((r) => (
+                <button
+                  key={r}
+                  type="button"
+                  onClick={() => handleRangeChange(r)}
+                  className={`px-2.5 py-1 rounded text-xs font-mono transition-colors ${
+                    historyRange === r
+                      ? 'bg-zinc-800 text-white border border-border'
+                      : 'text-zinc-500 hover:text-zinc-300'
+                  }`}
+                >
+                  {r.toUpperCase()}
+                </button>
+              ))}
+              <span className="ml-auto text-zinc-600 text-xs font-mono">
+                {history.length} sessions
+              </span>
+            </div>
+
+            <HistoryGrid bars={history} expanded={expanded} setExpanded={setExpanded} />
+          </div>
+        )}
 
         {/* Legend */}
         <div className="mt-6 p-4 rounded-lg border border-border bg-surface/30 text-xs text-zinc-500">
@@ -204,6 +274,59 @@ export default function App() {
   );
 }
 
+/* ── History Grid ── */
+
+function HistoryGrid({
+  bars,
+  expanded,
+  setExpanded,
+}: {
+  bars: ScreenerBar[];
+  expanded: number | null;
+  setExpanded: (t: number | null) => void;
+}) {
+  const sorted = [...bars].reverse();
+
+  return (
+    <div className="rounded-lg border border-border overflow-x-auto">
+      <table className="w-full text-sm min-w-[700px]">
+        <thead>
+          <tr className="bg-surface text-zinc-500 text-xs uppercase tracking-wider">
+            <th className="px-3 py-2.5 text-left font-medium">Date</th>
+            <th className="px-3 py-2.5 text-right font-medium">Close</th>
+            <th className="px-3 py-2.5 text-right font-medium">Chg%</th>
+            <th className="px-3 py-2.5 text-right font-medium">Vol</th>
+            <th className="px-3 py-2.5 text-center font-medium">Regime</th>
+            <th className="px-3 py-2.5 text-center font-medium">Conf</th>
+            <th className="px-3 py-2.5 text-center font-medium">Change?</th>
+            <th className="px-3 py-2.5 text-center font-medium">Viable?</th>
+            <th className="px-3 py-2.5 text-center font-medium">Gate</th>
+          </tr>
+        </thead>
+        <tbody className="divide-y divide-border/50">
+          {sorted.map((bar, i) => {
+            const prevBar = i < sorted.length - 1 ? sorted[i + 1] : undefined;
+            const chg = pctChange(bar, prevBar);
+            const isExpanded = expanded === bar.t;
+
+            return (
+              <ScreenerRow
+                key={bar.t}
+                bar={bar}
+                chg={chg}
+                isExpanded={isExpanded}
+                onToggle={() => setExpanded(isExpanded ? null : bar.t)}
+              />
+            );
+          })}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+/* ── Screener Row ── */
+
 function ScreenerRow({
   bar,
   chg,
@@ -230,7 +353,7 @@ function ScreenerRow({
               {chg.toFixed(2)}%
             </span>
           ) : (
-            <span className="text-zinc-600">—</span>
+            <span className="text-zinc-600">&mdash;</span>
           )}
         </td>
         <td className="px-3 py-2 text-right text-zinc-500 font-mono text-xs">

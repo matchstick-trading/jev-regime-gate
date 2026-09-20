@@ -1,5 +1,9 @@
 import type { RegimeType, GateDecision, BarFeatures } from './types';
 
+export function formatPrice(n: number): string {
+  return n.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+}
+
 const REGIME_COLORS: Record<RegimeType, { bg: string; text: string; label: string }> = {
   trend_up: { bg: 'bg-emerald-500/15', text: 'text-emerald-400', label: 'Trend Up' },
   trend_down: { bg: 'bg-matchstick/15', text: 'text-matchstick', label: 'Trend Down' },
