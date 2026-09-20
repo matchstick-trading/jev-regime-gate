@@ -215,7 +215,7 @@ export default function App() {
             </a>
             <span className="hidden sm:inline text-zinc-700">|</span>
             <a
-              href="https://matchstick-labs.pages.dev"
+              href="https://labs.matchstick.trading"
               className="hidden sm:inline text-zinc-400 hover:text-zinc-300 transition-colors"
               target="_blank"
               rel="noopener"
