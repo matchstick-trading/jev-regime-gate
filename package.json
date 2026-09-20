@@ -1,0 +1,37 @@
+{
+  "name": "@matchstick-trading/jev-regime-gate",
+  "version": "0.1.0",
+  "description": "Jev-powered regime gate for trading strategy backtests",
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "bin": {
+    "jev-regime-gate": "dist/index.js"
+  },
+  "scripts": {
+    "build": "tsc",
+    "start": "node --import tsx src/index.ts",
+    "test": "node --import tsx --test src/**/*.test.ts",
+    "fetch-data": "node --import tsx src/fetch-data.ts"
+  },
+  "keywords": [
+    "jev",
+    "regime-detection",
+    "trading",
+    "backtest",
+    "opencandle"
+  ],
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/matchstick-trading/jev-regime-gate"
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "devDependencies": {
+    "@types/node": "^26.6.2",
+    "tsx": "^4.19.0",
+    "typescript": "^5.6.0"
+  }
+}
