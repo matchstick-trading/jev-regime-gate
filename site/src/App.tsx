@@ -30,6 +30,62 @@ function Disclosure() {
   );
 }
 
+/* ── FAQ modal ── */
+
+const FAQ_ITEMS = [
+  {
+    term: 'Regime',
+    def: 'Jev classifies the current market into one of five regimes based on bucketed price features: trend_up, trend_down, range, chop, or unclear. This is pattern classification, not a prediction of future direction.',
+  },
+  {
+    term: 'Conf (Confidence)',
+    def: 'The highest probability in Jev\'s regime distribution. For example, 72% means the top regime received 0.72 out of 1.0. Higher confidence means one regime dominated; lower means the distribution is spread across several.',
+  },
+  {
+    term: 'Change?',
+    def: 'Jev\'s model-output score for "is a regime transition likely happening right now?" Above 50% suggests the current regime may be shifting. This is a pattern score, not a directional prediction.',
+  },
+  {
+    term: 'Viable?',
+    def: 'Jev\'s model-output score for "is a trend-following strategy compatible with the current regime?" Above 50% suggests directional conditions; below 50% suggests choppy or range-bound conditions where trend-following historically suffers.',
+  },
+  {
+    term: 'Gate',
+    def: 'A deterministic label derived from the Jev scores: "compatible" (regime clear + strategy viable), "mixed" (ambiguous conditions), or "not_compatible" (regime unclear or strategy incompatible). Code computes this from the model outputs — it is not a separate model call.',
+  },
+  {
+    term: 'Features',
+    def: 'Bucketed summaries of recent price data (total return, volatility, volume trend, range position, etc.) computed by deterministic code before Jev sees them. These are the inputs to classification, not outputs.',
+  },
+];
+
+function FAQModal({ open, onClose }: { open: boolean; onClose: () => void }) {
+  if (!open) return null;
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4"
+      onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}
+    >
+      <div className="relative bg-bg border border-border rounded-xl max-w-lg w-full max-h-[80vh] overflow-y-auto p-6">
+        <button onClick={onClose} className="absolute top-3 right-4 text-zinc-500 hover:text-white text-xl">
+          &times;
+        </button>
+        <h2 className="text-white font-semibold text-base mb-4 font-mono">
+          What do these metrics mean?
+        </h2>
+        <dl className="space-y-4">
+          {FAQ_ITEMS.map((item) => (
+            <div key={item.term}>
+              <dt className="text-matchstick font-semibold text-xs font-mono mb-1">{item.term}</dt>
+              <dd className="text-zinc-400 text-sm leading-relaxed">{item.def}</dd>
+            </div>
+          ))}
+        </dl>
+      </div>
+    </div>
+  );
+}
+
 /* ── App ── */
 
 export default function App() {
@@ -41,6 +97,7 @@ export default function App() {
   const [historyTotal, setHistoryTotal] = useState<number>(0);
   const [expanded, setExpanded] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [faqOpen, setFaqOpen] = useState(false);
 
   const handleSelectSymbol = useCallback(async (sym: string) => {
     setSymbol(sym);
@@ -128,8 +185,15 @@ export default function App() {
               </span>
             )}
           </div>
-          <div className="hidden sm:flex items-center gap-4 text-xs text-zinc-500">
-            <span>
+          <div className="flex items-center gap-4 text-xs text-zinc-500">
+            <button
+              onClick={() => setFaqOpen(true)}
+              title="What do these metrics mean?"
+              className="w-7 h-7 rounded-full border border-border bg-surface flex items-center justify-center text-zinc-400 hover:border-matchstick hover:text-matchstick transition-colors font-mono font-semibold text-sm"
+            >
+              ?
+            </button>
+            <span className="hidden sm:inline">
               Powered by{' '}
               <a
                 href="https://typesafe.ai"
@@ -140,10 +204,10 @@ export default function App() {
                 Jev
               </a>
             </span>
-            <span className="text-zinc-700">|</span>
+            <span className="hidden sm:inline text-zinc-700">|</span>
             <a
               href="https://github.com/matchstick-trading/opencandle"
-              className="text-zinc-400 hover:text-zinc-300 transition-colors"
+              className="hidden sm:inline text-zinc-400 hover:text-zinc-300 transition-colors"
               target="_blank"
               rel="noopener"
             >
@@ -298,6 +362,8 @@ export default function App() {
           meta fields
         </footer>
       </main>
+
+      <FAQModal open={faqOpen} onClose={() => setFaqOpen(false)} />
     </div>
   );
 }
