@@ -8,3 +8,9 @@
   --color-matchstick-dim: rgba(241, 71, 159, 0.25);
   --font-mono: 'JetBrains Mono', 'Fira Code', 'SF Mono', ui-monospace, monospace;
 }
+
+@keyframes fadeIn {
+  from { opacity: 0; transform: translateY(4px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+.row-enter { animation: fadeIn 0.2s ease-out; }

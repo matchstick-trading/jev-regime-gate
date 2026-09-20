@@ -121,42 +121,67 @@ async function handleHistory(url: URL, env: Env): Promise<Response> {
     return corsError(`Not enough data for ${symbol} (got ${bars.length} bars)`, 422);
   }
 
-  // Encode and classify each bar that has enough lookback.
-  const screenedBars: unknown[] = [];
+  const total = bars.length - MIN_LOOKBACK;
+  const encoder = new TextEncoder();
+  const { readable, writable } = new TransformStream();
+  const writer = writable.getWriter();
 
-  for (let i = MIN_LOOKBACK; i < bars.length; i++) {
-    const features = encodeBar(bars, i);
-    if (!features) continue;
+  // Kick off the streaming classification in the background.
+  const streamBars = async () => {
+    try {
+      // Header line so the client knows how many bars to expect.
+      await writer.write(
+        encoder.encode(JSON.stringify({ type: 'header', symbol, total }) + '\n'),
+      );
 
-    const stateJson = formatState(features);
-    const { response: jev, estimatedCost: _cost } = await classify(stateJson, env);
+      for (let i = MIN_LOOKBACK; i < bars.length; i++) {
+        const features = encodeBar(bars, i);
+        if (!features) continue;
 
-    const regime = jev.answers.regime_type;
-    const gate = applyGate(jev);
-    const bar = bars[i];
+        const stateJson = formatState(features);
+        const { response: jev, estimatedCost: _cost } = await classify(stateJson, env);
 
-    screenedBars.push({
-      t: bar.t,
-      o: bar.o,
-      h: bar.h,
-      l: bar.l,
-      c: bar.c,
-      v: bar.v,
-      regime: regime.choice as RegimeType,
-      maxP: Math.round(maxProbability(regime.probabilities) * 100) / 100,
-      probs: regime.probabilities,
-      changeLikely: Math.round(jev.answers.regime_change_likely.noul * 100) / 100,
-      viable: Math.round(jev.answers.strategy_viable.noul * 100) / 100,
-      gate: gate.decision,
-      size: gate.sizeFactor,
-      feat: features,
-    });
-  }
+        const regime = jev.answers.regime_type;
+        const gate = applyGate(jev);
+        const bar = bars[i];
 
-  return corsJson({
-    symbol,
-    interval: '1d',
-    bars: screenedBars,
+        const line = JSON.stringify({
+          type: 'bar',
+          t: bar.t,
+          o: bar.o,
+          h: bar.h,
+          l: bar.l,
+          c: bar.c,
+          v: bar.v,
+          regime: regime.choice as RegimeType,
+          maxP: Math.round(maxProbability(regime.probabilities) * 100) / 100,
+          probs: regime.probabilities,
+          changeLikely: Math.round(jev.answers.regime_change_likely.noul * 100) / 100,
+          viable: Math.round(jev.answers.strategy_viable.noul * 100) / 100,
+          gate: gate.decision,
+          size: gate.sizeFactor,
+          feat: features,
+        });
+
+        await writer.write(encoder.encode(line + '\n'));
+      }
+    } catch (err) {
+      console.error('Stream error:', err instanceof Error ? err.message : err);
+    } finally {
+      await writer.close();
+    }
+  };
+
+  // The function runs without await so the Response is returned immediately.
+  void streamBars();
+
+  return new Response(readable, {
+    status: 200,
+    headers: {
+      'Content-Type': 'application/x-ndjson',
+      'Transfer-Encoding': 'chunked',
+      ...CORS_HEADERS,
+    },
   });
 }
 

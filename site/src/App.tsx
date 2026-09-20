@@ -35,6 +35,7 @@ export default function App() {
   const [history, setHistory] = useState<ScreenerBar[] | null>(null);
   const [historyRange, setHistoryRange] = useState<HistoryRange>('1y');
   const [loading, setLoading] = useState<LoadingState>('idle');
+  const [historyTotal, setHistoryTotal] = useState<number>(0);
   const [expanded, setExpanded] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -73,9 +74,14 @@ export default function App() {
   const handleViewHistory = useCallback(async () => {
     if (!symbol || symbol === 'BYOD') return;
     setLoading('history');
+    setHistory([]);
+    setHistoryTotal(0);
     setError(null);
     try {
-      const bars = await fetchHistory(symbol, historyRange);
+      const bars = await fetchHistory(symbol, historyRange, (partial, total) => {
+        setHistory([...partial]);
+        setHistoryTotal(total);
+      });
       setHistory(bars);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to load history');
@@ -88,9 +94,14 @@ export default function App() {
     setHistoryRange(range);
     if (!symbol || symbol === 'BYOD') return;
     setLoading('history');
+    setHistory([]);
+    setHistoryTotal(0);
     setError(null);
     try {
-      const bars = await fetchHistory(symbol, range);
+      const bars = await fetchHistory(symbol, range, (partial, total) => {
+        setHistory([...partial]);
+        setHistoryTotal(total);
+      });
       setHistory(bars);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to load history');
@@ -183,18 +194,30 @@ export default function App() {
           </div>
         )}
 
-        {/* Phase 3: History loading */}
+        {/* Phase 3: History progress */}
         {loading === 'history' && (
-          <div className="mt-6 text-center">
-            <div className="inline-flex items-center gap-2 text-zinc-500 text-sm font-mono">
-              <div className="w-4 h-4 border-2 border-matchstick/30 border-t-matchstick rounded-full animate-spin" />
-              Classifying historical bars...
+          <div className="mt-6">
+            <div className="flex items-center gap-3 justify-center">
+              <div className="inline-flex items-center gap-2 text-zinc-500 text-sm font-mono">
+                <div className="w-4 h-4 border-2 border-matchstick/30 border-t-matchstick rounded-full animate-spin" />
+                {historyTotal > 0
+                  ? `Classifying ${history?.length ?? 0} / ${historyTotal} bars…`
+                  : 'Fetching bars…'}
+              </div>
             </div>
+            {historyTotal > 0 && (
+              <div className="mt-2 max-w-md mx-auto h-1 rounded-full bg-zinc-800 overflow-hidden">
+                <div
+                  className="h-full bg-matchstick rounded-full transition-all duration-200 ease-out"
+                  style={{ width: `${((history?.length ?? 0) / historyTotal) * 100}%` }}
+                />
+              </div>
+            )}
           </div>
         )}
 
-        {/* Phase 3: History grid */}
-        {history && history.length > 0 && loading !== 'history' && (
+        {/* Phase 3: History grid (visible during streaming and after) */}
+        {history && history.length > 0 && (
           <div className="mt-6">
             {/* Range selector */}
             <div className="flex items-center gap-2 mb-3">
@@ -341,7 +364,7 @@ function ScreenerRow({
   return (
     <>
       <tr
-        className="hover:bg-zinc-900/50 cursor-pointer transition-colors"
+        className="row-enter hover:bg-zinc-900/50 cursor-pointer transition-colors"
         onClick={onToggle}
       >
         <td className="px-3 py-2 text-zinc-400 font-mono text-xs">{formatDate(bar.t)}</td>
