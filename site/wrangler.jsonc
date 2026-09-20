@@ -8,7 +8,7 @@
   },
   "main": "src/worker/index.ts",
   "kv_namespaces": [
-    { "binding": "JEV_CACHE", "id": "placeholder" }
+    { "binding": "JEV_CACHE", "id": "2bed9e51fefc47c8b7d35b248544f6e7" }
   ],
   "routes": [
     {
