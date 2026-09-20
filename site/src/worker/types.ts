@@ -70,6 +70,14 @@ export interface JevAutopsyResponse {
   usage?: { input_tokens: number; output_tokens: number; cost?: number };
 }
 
+export interface JevIncidentResponse {
+  model: string;
+  answers: {
+    incident_family: JevChoiceAnswer;
+  };
+  usage?: { input_tokens: number; output_tokens: number; cost?: number };
+}
+
 // --- Worker environment bindings ---
 
 export interface Env {

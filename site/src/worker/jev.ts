@@ -1,4 +1,4 @@
-import type { Env, JevResponse, JevAutopsyResponse } from './types';
+import type { Env, JevResponse, JevAutopsyResponse, JevIncidentResponse } from './types';
 
 const JEV_URL = 'https://openrouter.ai/api/alpha/decisions';
 const JEV_MODEL = 'typesafe/jev-1.13';
@@ -235,6 +235,104 @@ export async function judgeAutopsy(
   }
 
   throw new JevUnavailableError('Autopsy unavailable');
+}
+
+const INCIDENT_CRITERIA: Record<string, string> = {
+  stale_quote:
+    'The bid/ask quote stayed frozen for an unusually long run of consecutive prints while trades kept occurring — the feed stopped updating one side of the book.',
+  crossed_book:
+    'A meaningful share of quotes show the bid at or above the ask — a crossed or locked book, which should not persist in a clean feed.',
+  duplicate_tick:
+    'A meaningful share of trade prints are exact duplicates of the immediately preceding print — same time, price, and size.',
+  out_of_order_event:
+    'One or more trade prints arrived with an earlier timestamp than the print immediately before it, despite a later sequence number — an ordering violation.',
+  unadjusted_split:
+    'A large single-print price jump has no corroborating explanation and no other feed symptom — consistent with an unadjusted corporate action rather than a real market move.',
+  clean:
+    'No diagnostic signal rises meaningfully above normal noise, including an isolated price jump that stands alone with no other feed symptom.',
+};
+
+export interface IncidentResult {
+  family: string;
+  probabilities: Record<string, number>;
+  confidence: number;
+  estimatedCost: number;
+}
+
+export async function judgeIncident(
+  state: Record<string, string>,
+  env: Env,
+): Promise<IncidentResult> {
+  const body = {
+    model: JEV_MODEL,
+    state,
+    questions: {
+      incident_family: {
+        type: 'choice',
+        instructions:
+          'Classify the most likely market-data feed incident from the described diagnostic signals. Pick "clean" if the signals look like normal feed behavior, including a genuine one-off price discontinuity with no other corroborating symptom.',
+        criteria: INCIDENT_CRITERIA,
+      },
+    },
+  };
+
+  const key = await hashState(JSON.stringify({ incident: state }));
+
+  if (env.JEV_CACHE) {
+    try {
+      const cached = await env.JEV_CACHE.get(key, 'json');
+      if (cached) return cached as IncidentResult;
+    } catch { /* cache miss */ }
+  }
+
+  for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
+    try {
+      const res = await fetch(JEV_URL, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${env.OPENROUTER_API_KEY}`,
+        },
+        body: JSON.stringify(body),
+      });
+
+      if (res.status === 429) {
+        await sleep(BASE_DELAY_MS * 2 ** attempt);
+        continue;
+      }
+
+      if (!res.ok) {
+        const text = await res.text();
+        throw new Error(`Jev API ${res.status}: ${text}`);
+      }
+
+      const data = (await res.json()) as JevIncidentResponse;
+      const tokens = data.usage?.input_tokens ?? 0;
+      const answer = data.answers.incident_family;
+      const result: IncidentResult = {
+        family: answer.choice,
+        probabilities: answer.probabilities,
+        confidence: answer.confidence,
+        estimatedCost: (tokens / 1_000_000) * COST_PER_M_INPUT,
+      };
+
+      if (env.JEV_CACHE) {
+        try {
+          await env.JEV_CACHE.put(key, JSON.stringify(result), { expirationTtl: CACHE_TTL_SECONDS });
+        } catch { /* non-fatal */ }
+      }
+
+      return result;
+    } catch (err) {
+      if (attempt === MAX_RETRIES - 1) {
+        const msg = err instanceof Error ? err.message : 'unknown error';
+        throw new JevUnavailableError(`Incident triage unavailable after ${MAX_RETRIES} attempts: ${msg}`);
+      }
+      await sleep(BASE_DELAY_MS * 2 ** attempt);
+    }
+  }
+
+  throw new JevUnavailableError('Incident triage unavailable');
 }
 
 /**
