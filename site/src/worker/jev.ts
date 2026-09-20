@@ -1,4 +1,4 @@
-import type { Env, JevResponse } from './types';
+import type { Env, JevResponse, JevAutopsyResponse } from './types';
 
 const JEV_URL = 'https://openrouter.ai/api/alpha/decisions';
 const JEV_MODEL = 'typesafe/jev-1.13';
@@ -137,6 +137,104 @@ export async function judgeMatch(
   }
 
   throw new JevUnavailableError('Judge unavailable');
+}
+
+const AUTOPSY_CRITERIA: Record<string, string> = {
+  lookahead_leakage:
+    'A meaningful share of orders show a decision that used feature data timestamped after the decision time — information from the future reached the strategy before it should exist.',
+  timezone_mismatch:
+    'Fills cluster outside the declared trading session by a consistent offset, suggesting bar or order timestamps were interpreted in the wrong timezone.',
+  bad_corporate_action_adjustment:
+    'The price series shows an unexplained large discontinuity that does not match any recorded split or dividend adjustment factor.',
+  event_ordering_violation:
+    'Order events show a fill recorded before its submission, or a submission recorded before its signal — an impossible causal sequence.',
+  unrealistic_fills:
+    'Fill prices fall outside the bar high-low range, or a fill size exceeds plausible bar liquidity.',
+  clean:
+    'No diagnostic signal rises meaningfully above normal noise; the run looks internally consistent.',
+};
+
+export interface AutopsyResult {
+  family: string;
+  probabilities: Record<string, number>;
+  confidence: number;
+  estimatedCost: number;
+}
+
+export async function judgeAutopsy(
+  state: Record<string, string>,
+  env: Env,
+): Promise<AutopsyResult> {
+  const body = {
+    model: JEV_MODEL,
+    state,
+    questions: {
+      failure_family: {
+        type: 'choice',
+        instructions:
+          'Classify the most likely cause of a backtest data-integrity problem from the described diagnostic signals. Pick "clean" only if no signal rises meaningfully above normal noise.',
+        criteria: AUTOPSY_CRITERIA,
+      },
+    },
+  };
+
+  const key = await hashState(JSON.stringify({ autopsy: state }));
+
+  if (env.JEV_CACHE) {
+    try {
+      const cached = await env.JEV_CACHE.get(key, 'json');
+      if (cached) return cached as AutopsyResult;
+    } catch { /* cache miss */ }
+  }
+
+  for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
+    try {
+      const res = await fetch(JEV_URL, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${env.OPENROUTER_API_KEY}`,
+        },
+        body: JSON.stringify(body),
+      });
+
+      if (res.status === 429) {
+        await sleep(BASE_DELAY_MS * 2 ** attempt);
+        continue;
+      }
+
+      if (!res.ok) {
+        const text = await res.text();
+        throw new Error(`Jev API ${res.status}: ${text}`);
+      }
+
+      const data = (await res.json()) as JevAutopsyResponse;
+      const tokens = data.usage?.input_tokens ?? 0;
+      const answer = data.answers.failure_family;
+      const result: AutopsyResult = {
+        family: answer.choice,
+        probabilities: answer.probabilities,
+        confidence: answer.confidence,
+        estimatedCost: (tokens / 1_000_000) * COST_PER_M_INPUT,
+      };
+
+      if (env.JEV_CACHE) {
+        try {
+          await env.JEV_CACHE.put(key, JSON.stringify(result), { expirationTtl: CACHE_TTL_SECONDS });
+        } catch { /* non-fatal */ }
+      }
+
+      return result;
+    } catch (err) {
+      if (attempt === MAX_RETRIES - 1) {
+        const msg = err instanceof Error ? err.message : 'unknown error';
+        throw new JevUnavailableError(`Autopsy unavailable after ${MAX_RETRIES} attempts: ${msg}`);
+      }
+      await sleep(BASE_DELAY_MS * 2 ** attempt);
+    }
+  }
+
+  throw new JevUnavailableError('Autopsy unavailable');
 }
 
 /**

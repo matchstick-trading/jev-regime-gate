@@ -2,7 +2,7 @@ import type { Env, Bar, RegimeType } from './types';
 import { getTrie } from './tickers';
 import { fetchBars } from './yahoo';
 import { encodeBar, formatState, MIN_LOOKBACK } from './encoder';
-import { classify, judgeMatch, JevUnavailableError } from './jev';
+import { classify, judgeMatch, judgeAutopsy, JevUnavailableError } from './jev';
 import { applyGate, maxProbability } from './gate';
 
 // --- CORS helpers ---
@@ -140,6 +140,28 @@ async function handleJudge(request: Request, env: Env): Promise<Response> {
   }
 }
 
+async function handleAutopsy(request: Request, env: Env): Promise<Response> {
+  const body = (await request.json()) as {
+    state?: Record<string, string>;
+  };
+
+  if (!body.state) {
+    return corsError('Provide {state: {...}}', 400);
+  }
+
+  try {
+    const result = await judgeAutopsy(body.state, env);
+    return corsJson(result, 200, {
+      'X-Jev-Cost': result.estimatedCost.toFixed(6),
+    });
+  } catch (err) {
+    if (err instanceof JevUnavailableError) {
+      return corsError('Autopsy unavailable — model service did not respond', 503);
+    }
+    throw err;
+  }
+}
+
 async function handleHistory(url: URL, env: Env): Promise<Response> {
   const symbol = url.searchParams.get('symbol')?.toUpperCase();
   if (!symbol) return corsError('Missing ?symbol= parameter', 400);
@@ -245,6 +267,10 @@ export default {
 
       if (url.pathname === '/api/judge' && request.method === 'POST') {
         return await handleJudge(request, env);
+      }
+
+      if (url.pathname === '/api/autopsy' && request.method === 'POST') {
+        return await handleAutopsy(request, env);
       }
 
       if (url.pathname === '/api/history' && request.method === 'GET') {
