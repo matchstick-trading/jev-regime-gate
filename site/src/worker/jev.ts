@@ -61,6 +61,84 @@ export interface ClassifyResult {
   estimatedCost: number;
 }
 
+export interface JudgeResult {
+  score: number;
+  estimatedCost: number;
+}
+
+export async function judgeMatch(
+  question: string,
+  state: Record<string, string>,
+  env: Env,
+): Promise<JudgeResult> {
+  const body = {
+    model: JEV_MODEL,
+    state,
+    questions: {
+      episode_match: {
+        type: 'noul',
+        instructions: question,
+      },
+    },
+  };
+
+  const stateKey = JSON.stringify({ q: question, s: state });
+  const key = await hashState(stateKey);
+
+  if (env.JEV_CACHE) {
+    try {
+      const cached = await env.JEV_CACHE.get(key, 'json');
+      if (cached) return cached as JudgeResult;
+    } catch { /* cache miss */ }
+  }
+
+  for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
+    try {
+      const res = await fetch(JEV_URL, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${env.OPENROUTER_API_KEY}`,
+        },
+        body: JSON.stringify(body),
+      });
+
+      if (res.status === 429) {
+        await sleep(BASE_DELAY_MS * 2 ** attempt);
+        continue;
+      }
+
+      if (!res.ok) {
+        const text = await res.text();
+        throw new Error(`Jev API ${res.status}: ${text}`);
+      }
+
+      const data = (await res.json()) as { answers: { episode_match: { noul: number } }; usage?: { input_tokens: number } };
+      const tokens = data.usage?.input_tokens ?? 0;
+      const result: JudgeResult = {
+        score: data.answers.episode_match.noul,
+        estimatedCost: (tokens / 1_000_000) * COST_PER_M_INPUT,
+      };
+
+      if (env.JEV_CACHE) {
+        try {
+          await env.JEV_CACHE.put(key, JSON.stringify(result), { expirationTtl: CACHE_TTL_SECONDS });
+        } catch { /* non-fatal */ }
+      }
+
+      return result;
+    } catch (err) {
+      if (attempt === MAX_RETRIES - 1) {
+        const msg = err instanceof Error ? err.message : 'unknown error';
+        throw new JevUnavailableError(`Judge unavailable after ${MAX_RETRIES} attempts: ${msg}`);
+      }
+      await sleep(BASE_DELAY_MS * 2 ** attempt);
+    }
+  }
+
+  throw new JevUnavailableError('Judge unavailable');
+}
+
 /**
  * Send bar features to the Jev decision API and return the regime
  * classification. Results are cached in KV for 24 hours.
