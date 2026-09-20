@@ -66,7 +66,7 @@ export default function App() {
             </span>
             <span className="text-xs text-zinc-600 font-mono">{feed.interval}</span>
           </div>
-          <div className="flex items-center gap-4 text-xs text-zinc-500">
+          <div className="hidden sm:flex items-center gap-4 text-xs text-zinc-500">
             <span>
               Powered by{' '}
               <a
@@ -92,33 +92,33 @@ export default function App() {
       </header>
 
       {/* Summary strip */}
-      <div className="border-b border-border bg-surface/30">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 py-3 flex flex-wrap items-center gap-6 text-xs">
+      <div className="border-b border-border bg-surface/30 overflow-x-auto">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 py-3 flex items-center gap-4 sm:gap-6 text-xs min-w-max sm:min-w-0">
           <div>
             <span className="text-zinc-500">Latest</span>{' '}
             <span className="text-white font-mono font-medium">${formatPrice(latest.c)}</span>
           </div>
           <div>
-            <span className="text-zinc-500">Current Regime</span>{' '}
+            <span className="text-zinc-500">Regime</span>{' '}
             <RegimeBadge regime={latest.regime} />
           </div>
           <div>
-            <span className="text-zinc-500">Confidence</span>{' '}
+            <span className="text-zinc-500">Conf</span>{' '}
             <span className="text-white font-mono">{(latest.maxP * 100).toFixed(0)}%</span>
           </div>
           <div>
             <span className="text-zinc-500">Gate</span> <GateBadge gate={latest.gate} />
           </div>
-          <div className="ml-auto text-zinc-600">
-            {feed.bars.length} sessions &middot; {feed.vendor} &middot; Research experiment, not investment advice
+          <div className="ml-auto text-zinc-600 whitespace-nowrap">
+            {feed.bars.length} sessions &middot; {feed.vendor} &middot; <span className="hidden sm:inline">Research experiment, n</span><span className="sm:hidden">N</span>ot investment advice
           </div>
         </div>
       </div>
 
       {/* Data grid */}
       <main className="max-w-7xl mx-auto px-4 sm:px-6 py-4">
-        <div className="rounded-lg border border-border overflow-hidden">
-          <table className="w-full text-sm">
+        <div className="rounded-lg border border-border overflow-x-auto">
+          <table className="w-full text-sm min-w-[700px]">
             <thead>
               <tr className="bg-surface text-zinc-500 text-xs uppercase tracking-wider">
                 <th className="px-3 py-2.5 text-left font-medium">Date</th>
@@ -169,8 +169,8 @@ export default function App() {
               <GateBadge gate="half_size" />{' '}
               <GateBadge gate="stand_down" />
             </div>
-            <div className="ml-auto">
-              <span className="text-zinc-400 font-medium">Conf</span> = max probability from Jev distribution (not the confidence field)
+            <div className="sm:ml-auto">
+              <span className="text-zinc-400 font-medium">Conf</span> = max probability from Jev distribution
             </div>
           </div>
         </div>
@@ -270,7 +270,7 @@ function ScreenerRow({
                 <div className="text-zinc-500 mb-1 uppercase tracking-wider font-medium">
                   Regime Probabilities
                 </div>
-                <div className="flex gap-3 font-mono">
+                <div className="flex flex-wrap gap-x-3 gap-y-1 font-mono">
                   {Object.entries(bar.probs)
                     .sort(([, a], [, b]) => b - a)
                     .map(([regime, prob]) => (
