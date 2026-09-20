@@ -3,12 +3,18 @@
   "compatibility_date": "2026-09-18",
   "workers_dev": true,
   "assets": {
-    "directory": "./dist"
+    "directory": "./dist",
+    "binding": "ASSETS"
   },
+  "main": "src/worker/index.ts",
+  "kv_namespaces": [
+    { "binding": "JEV_CACHE", "id": "2bed9e51fefc47c8b7d35b248544f6e7" }
+  ],
   "routes": [
     {
       "pattern": "jev.matchstick.trading",
       "custom_domain": true
     }
-  ]
+  ],
+  "triggers": { "crons": ["*/5 * * * *"] }
 }
