@@ -1,0 +1,10 @@
+@import "tailwindcss";
+
+@theme {
+  --color-surface: #18181b;
+  --color-border: #27272a;
+  --color-bg: #09090b;
+  --color-matchstick: #F1479F;
+  --color-matchstick-dim: rgba(241, 71, 159, 0.25);
+  --font-mono: 'JetBrains Mono', 'Fira Code', 'SF Mono', ui-monospace, monospace;
+}
