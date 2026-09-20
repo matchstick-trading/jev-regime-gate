@@ -1,0 +1,14 @@
+{
+  "name": "jev-regime-screener",
+  "compatibility_date": "2026-09-18",
+  "workers_dev": true,
+  "assets": {
+    "directory": "./dist"
+  },
+  "routes": [
+    {
+      "pattern": "jev.matchstick.trading",
+      "custom_domain": true
+    }
+  ]
+}
