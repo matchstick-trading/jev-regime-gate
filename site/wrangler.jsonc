@@ -15,5 +15,6 @@
       "pattern": "jev.matchstick.trading",
       "custom_domain": true
     }
-  ]
+  ],
+  "triggers": { "crons": ["*/5 * * * *"] }
 }

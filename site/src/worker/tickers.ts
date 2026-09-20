@@ -1,68 +1,23 @@
 import { SymbolTrie } from './symbol-trie';
-import type { TickerEntry } from './types';
-
-const SEC_URL = 'https://www.sec.gov/files/company_tickers.json';
-
-/** Shape of a single record in the SEC JSON object. */
-interface SecTicker {
-  cik_str: number;
-  ticker: string;
-  title: string;
-}
-
-/** Module-level singleton — survives across requests within a Worker isolate. */
-let cachedTrie: SymbolTrie | null = null;
-let loading: Promise<SymbolTrie> | null = null;
+import { TICKERS } from './ticker-data';
 
 /**
- * Build or return the cached trie. Only fetches SEC data once per
- * Worker isolate lifetime.
+ * Module-level singleton — built once from bundled data, survives across
+ * requests within a Worker isolate.  No network fetch required.
  */
-export async function getTrie(): Promise<SymbolTrie> {
-  if (cachedTrie) return cachedTrie;
+let cachedTrie: SymbolTrie | null = null;
 
-  // Deduplicate concurrent callers during initial load.
-  if (loading) return loading;
-
-  loading = (async () => {
-    const res = await fetch(SEC_URL, {
-      headers: {
-        'User-Agent': 'jev-regime-screener/1.0 (matthew.scott.hendricks@gmail.com)',
-        Accept: 'application/json',
-      },
-    });
-
-    if (!res.ok) {
-      throw new Error(`SEC tickers ${res.status}: ${await res.text()}`);
-    }
-
-    const data = (await res.json()) as Record<string, SecTicker>;
-
-    const entries: TickerEntry[] = [];
-    const seen = new Set<string>();
-
-    for (const val of Object.values(data)) {
-      const symbol = val.ticker.toUpperCase();
-      // Deduplicate — SEC data can have duplicates for the same ticker.
-      if (seen.has(symbol)) continue;
-      seen.add(symbol);
-      entries.push({
-        id: String(val.cik_str),
-        symbol,
-        name: val.title,
-      });
-    }
-
+/**
+ * Build or return the cached trie.  The ticker data is compiled into the
+ * Worker bundle so this is synchronous after the first call.
+ */
+export function getTrie(): Promise<SymbolTrie> {
+  if (!cachedTrie) {
     const trie = new SymbolTrie();
-    trie.insertMany(entries);
+    trie.insertMany(
+      TICKERS.map((t) => ({ id: '', symbol: t.symbol, name: t.name })),
+    );
     cachedTrie = trie;
-    return trie;
-  })();
-
-  try {
-    const trie = await loading;
-    return trie;
-  } finally {
-    loading = null;
   }
+  return Promise.resolve(cachedTrie);
 }

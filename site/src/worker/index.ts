@@ -163,6 +163,10 @@ async function handleHistory(url: URL, env: Env): Promise<Response> {
 // --- Worker entry point ---
 
 export default {
+  scheduled(_controller: ScheduledController, _env: Env, ctx: ExecutionContext) {
+    ctx.waitUntil(getTrie());
+  },
+
   async fetch(request: Request, env: Env): Promise<Response> {
     const url = new URL(request.url);
 
