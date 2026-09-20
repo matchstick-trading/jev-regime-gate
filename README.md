@@ -11,7 +11,7 @@ Jev-powered regime gate for trading strategy backtests. Uses TypeSafe's [Jev](ht
 3. **Gate** — trade / stand down / scale size based on regime fit + confidence
 4. **Compare** — same strategy, same period: gated vs ungated equity curves
 
-Results are stored per bar in [OpenCandle](https://github.com/matchstick-trading) `meta` fields.
+Results are stored per bar in [OpenCandle](https://github.com/matchstick-trading/opencandle) `meta` fields.
 
 ## Usage
 
