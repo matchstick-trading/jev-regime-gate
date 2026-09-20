@@ -1,6 +1,6 @@
 import type { Bar } from './types';
 
-type YahooRange = '60d' | '1y' | '3y';
+type YahooRange = '3mo' | '1y' | '5y';
 
 interface YahooResult {
   chart: {

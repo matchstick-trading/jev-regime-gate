@@ -1,5 +1,5 @@
 import type { TodayResult, RegimeType } from './types';
-import { RegimeBadge, GateBadge, ConfidenceBar, FeaturePills } from './components';
+import { RegimeBadge, GateBadge, ConfidenceBar, FeaturePills, formatPrice } from './components';
 
 const REGIME_BAR_COLORS: Record<RegimeType, string> = {
   trend_up: 'bg-emerald-500',
@@ -173,8 +173,4 @@ export function TodayCardSkeleton() {
       </div>
     </div>
   );
-}
-
-function formatPrice(n: number): string {
-  return n.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 }

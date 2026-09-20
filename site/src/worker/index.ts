@@ -3,7 +3,7 @@ import { getTrie } from './tickers';
 import { fetchBars } from './yahoo';
 import { encodeBar, formatState, MIN_LOOKBACK } from './encoder';
 import { classify } from './jev';
-import { applyGate } from './gate';
+import { applyGate, maxProbability } from './gate';
 
 // --- CORS helpers ---
 
@@ -50,14 +50,20 @@ async function handleClassify(request: Request, env: Env): Promise<Response> {
 
   let bars: Bar[];
   let symbol: string | undefined;
+  let tickerName: string | undefined;
 
   if (body.bars && Array.isArray(body.bars)) {
     // BYOD mode
     bars = body.bars;
+    symbol = 'BYOD';
   } else if (body.symbol && body.source === 'yahoo') {
-    // On-demand mode — fetch 60d (enough for MIN_LOOKBACK + current bar)
+    // On-demand mode — fetch 3mo (enough for MIN_LOOKBACK + current bar)
     symbol = body.symbol.toUpperCase();
-    bars = await fetchBars(symbol, '60d');
+    bars = await fetchBars(symbol, '3mo');
+    // Look up company name from trie
+    const trie = await getTrie();
+    const match = trie.findExact(symbol);
+    if (match.length > 0) tickerName = match[0].name;
   } else {
     return corsError('Provide {symbol, source:"yahoo"} or {bars: [...]}', 400);
   }
@@ -79,7 +85,15 @@ async function handleClassify(request: Request, env: Env): Promise<Response> {
   const { decision } = applyGate(jev);
   const lastBar = bars[lastIndex];
 
-  const result: Record<string, unknown> = {
+  const prevBar = bars[lastIndex - 1];
+  const change = prevBar ? ((lastBar.c - prevBar.c) / prevBar.c) * 100 : 0;
+
+  const result = {
+    symbol: symbol ?? 'BYOD',
+    name: tickerName ?? '',
+    date: new Date(lastBar.t * 1000).toISOString().slice(0, 10),
+    close: Math.round(lastBar.c * 100) / 100,
+    change: Math.round(change * 100) / 100,
     regime: regime.choice,
     maxP: Math.round(maxProbability(regime.probabilities) * 100) / 100,
     probs: regime.probabilities,
@@ -88,12 +102,6 @@ async function handleClassify(request: Request, env: Env): Promise<Response> {
     gate: decision,
     features,
   };
-
-  if (symbol) {
-    result.symbol = symbol;
-    result.date = new Date(lastBar.t * 1000).toISOString().slice(0, 10);
-    result.close = Math.round(lastBar.c * 100) / 100;
-  }
 
   return corsJson(result, 200, {
     'X-Jev-Cost': estimatedCost.toFixed(6),
@@ -104,12 +112,10 @@ async function handleHistory(url: URL, env: Env): Promise<Response> {
   const symbol = url.searchParams.get('symbol')?.toUpperCase();
   if (!symbol) return corsError('Missing ?symbol= parameter', 400);
 
-  const range = url.searchParams.get('range') ?? '1y';
-  if (range !== '1y' && range !== '3y') {
-    return corsError('Range must be 1y or 3y', 400);
-  }
+  const rangeParam = url.searchParams.get('range') ?? '1y';
+  const yahooRange = rangeParam === '3y' ? '5y' as const : '1y' as const;
 
-  const bars = await fetchBars(symbol, range);
+  const bars = await fetchBars(symbol, yahooRange);
 
   if (bars.length <= MIN_LOOKBACK) {
     return corsError(`Not enough data for ${symbol} (got ${bars.length} bars)`, 422);
@@ -152,12 +158,6 @@ async function handleHistory(url: URL, env: Env): Promise<Response> {
     interval: '1d',
     bars: screenedBars,
   });
-}
-
-// --- Utility ---
-
-function maxProbability(probabilities: Record<string, number>): number {
-  return Math.max(...Object.values(probabilities));
 }
 
 // --- Worker entry point ---

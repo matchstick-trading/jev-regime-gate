@@ -197,8 +197,8 @@ function parsePasteData(text: string): RawBar[] {
 
 function toEpoch(dateStr: string): number {
   const n = Number(dateStr);
-  if (!isNaN(n) && n > 946684800) return n; // Already epoch seconds
+  if (!isNaN(n) && n > 946684800) return n;
   const d = new Date(dateStr);
-  if (isNaN(d.getTime())) return 0;
+  if (isNaN(d.getTime())) throw new Error(`Cannot parse date: "${dateStr}"`);
   return Math.floor(d.getTime() / 1000);
 }

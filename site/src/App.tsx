@@ -1,6 +1,6 @@
 import { useState, useCallback } from 'react';
 import type { TodayResult, ScreenerBar, RawBar, LoadingState, HistoryRange } from './types';
-import { RegimeBadge, GateBadge, ConfidenceBar, FeaturePills } from './components';
+import { RegimeBadge, GateBadge, ConfidenceBar, FeaturePills, formatPrice } from './components';
 import { SymbolSearch, QuickPicks } from './search';
 import { TodayCard, TodayCardSkeleton } from './today-card';
 import { BYOD } from './byod';
@@ -14,10 +14,6 @@ function formatDate(ts: number): string {
     day: 'numeric',
     year: '2-digit',
   });
-}
-
-function formatPrice(n: number): string {
-  return n.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 }
 
 function formatVolume(v: number): string {

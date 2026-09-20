@@ -5,7 +5,8 @@ const BASE = '';
 export async function searchSymbols(q: string, limit = 8): Promise<SearchResult[]> {
   const res = await fetch(`${BASE}/api/search?q=${encodeURIComponent(q)}&limit=${limit}`);
   if (!res.ok) return [];
-  return res.json() as Promise<SearchResult[]>;
+  const data = (await res.json()) as { results: SearchResult[] };
+  return data.results;
 }
 
 export async function classifyToday(symbol: string): Promise<TodayResult> {
@@ -34,5 +35,6 @@ export async function fetchHistory(
 ): Promise<ScreenerBar[]> {
   const res = await fetch(`${BASE}/api/history?symbol=${encodeURIComponent(symbol)}&range=${range}`);
   if (!res.ok) throw new Error(`History fetch failed: ${res.status}`);
-  return res.json() as Promise<ScreenerBar[]>;
+  const data = (await res.json()) as { symbol: string; interval: string; bars: ScreenerBar[] };
+  return data.bars;
 }

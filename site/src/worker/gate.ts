@@ -5,7 +5,7 @@ export interface GateResult {
   sizeFactor: number;
 }
 
-function maxProbability(probabilities: Record<string, number>): number {
+export function maxProbability(probabilities: Record<string, number>): number {
   return Math.max(...Object.values(probabilities));
 }
 
