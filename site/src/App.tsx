@@ -213,6 +213,15 @@ export default function App() {
             >
               OpenCandle
             </a>
+            <span className="hidden sm:inline text-zinc-700">|</span>
+            <a
+              href="https://matchstick-labs.pages.dev"
+              className="hidden sm:inline text-zinc-400 hover:text-zinc-300 transition-colors"
+              target="_blank"
+              rel="noopener"
+            >
+              See it in Matchstick Labs
+            </a>
           </div>
         </div>
       </header>
