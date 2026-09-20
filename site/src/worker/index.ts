@@ -184,6 +184,45 @@ async function handleIncident(request: Request, env: Env): Promise<Response> {
   }
 }
 
+const BOUNDARY_KEYS = ['vol_vs_baseline', 'trend_persistence', 'atr_expansion', 'price_vs_sma'] as const;
+
+async function handleBoundary(request: Request, env: Env): Promise<Response> {
+  const body = (await request.json()) as {
+    state?: Record<string, string>;
+  };
+
+  if (!body.state || BOUNDARY_KEYS.some((k) => typeof body.state![k] !== 'string')) {
+    return corsError(`Provide {state: {${BOUNDARY_KEYS.join(', ')}}}`, 400);
+  }
+
+  const state: Record<string, string> = {};
+  for (const key of BOUNDARY_KEYS) state[key] = body.state[key];
+
+  let jevResult;
+  try {
+    jevResult = await classify(JSON.stringify(state), env);
+  } catch (err) {
+    if (err instanceof JevUnavailableError) {
+      return corsError('Classification unavailable — model service did not respond', 503);
+    }
+    throw err;
+  }
+  const { response: jev, estimatedCost } = jevResult;
+  const regime = jev.answers.regime_type;
+
+  const result = {
+    regime: regime.choice,
+    probs: regime.probabilities,
+    maxP: Math.round(maxProbability(regime.probabilities) * 100) / 100,
+    changeLikely: Math.round(jev.answers.regime_change_likely.noul * 100) / 100,
+    viable: Math.round(jev.answers.strategy_viable.noul * 100) / 100,
+  };
+
+  return corsJson(result, 200, {
+    'X-Jev-Cost': estimatedCost.toFixed(6),
+  });
+}
+
 async function handleHistory(url: URL, env: Env): Promise<Response> {
   const symbol = url.searchParams.get('symbol')?.toUpperCase();
   if (!symbol) return corsError('Missing ?symbol= parameter', 400);
@@ -297,6 +336,10 @@ export default {
 
       if (url.pathname === '/api/incident' && request.method === 'POST') {
         return await handleIncident(request, env);
+      }
+
+      if (url.pathname === '/api/boundary' && request.method === 'POST') {
+        return await handleBoundary(request, env);
       }
 
       if (url.pathname === '/api/history' && request.method === 'GET') {
