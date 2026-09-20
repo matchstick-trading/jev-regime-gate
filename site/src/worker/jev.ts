@@ -1,7 +1,9 @@
-import type { Env, JevResponse, JevAutopsyResponse, JevIncidentResponse } from './types';
+import type { Env, JevResponse, JevAutopsyResponse, JevIncidentResponse, JevIntentResponse, OrderDraft } from './types';
 
 const JEV_URL = 'https://openrouter.ai/api/alpha/decisions';
 const JEV_MODEL = 'typesafe/jev-1.13';
+const OPENROUTER_CHAT_URL = 'https://openrouter.ai/api/v1/chat/completions';
+const DRAFT_MODEL = 'openai/gpt-4o-mini';
 const COST_PER_M_INPUT = 0.042;
 const MAX_RETRIES = 3;
 const BASE_DELAY_MS = 2000;
@@ -333,6 +335,184 @@ export async function judgeIncident(
   }
 
   throw new JevUnavailableError('Incident triage unavailable');
+}
+
+const INSTRUMENT_LIST = 'ES (E-mini S&P 500), NQ (E-mini Nasdaq-100), CL (Crude Oil), GC (Gold), 6E (Euro FX)';
+
+const DRAFT_SYSTEM_PROMPT = `You convert a plain-English futures order request into a structured JSON draft. You never execute or submit anything -- you only draft. Available instruments: ${INSTRUMENT_LIST}. If the request names an instrument not in this list, or isn't a futures order at all, set instrument to null.
+
+Respond with ONLY a JSON object, no other text, with exactly these fields:
+{
+  "instrument": one of "ES","NQ","CL","GC","6E", or null,
+  "side": "buy", "sell", or null,
+  "quantity": integer number of contracts, or null,
+  "orderType": "market", "limit", or "stop",
+  "limitPrice": number or null,
+  "stopPrice": number or null,
+  "stopLossPoints": number or null -- distance in points from entry if a stop-loss was mentioned,
+  "restatement": one plain-English sentence restating what you understood,
+  "confidence": "high", "medium", or "low" -- your own confidence this draft captures the user's intent
+}`;
+
+/**
+ * Draft a structured order from a plain-English request using a general
+ * chat model (not Jev). This step only interprets and drafts -- it never
+ * executes or submits anything. Results are cached in KV for 24 hours.
+ */
+export async function draftIntent(requestText: string, env: Env): Promise<OrderDraft> {
+  const key = await hashState(JSON.stringify({ draft: requestText }));
+
+  if (env.JEV_CACHE) {
+    try {
+      const cached = await env.JEV_CACHE.get(key, 'json');
+      if (cached) return cached as OrderDraft;
+    } catch { /* cache miss */ }
+  }
+
+  for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
+    try {
+      const res = await fetch(OPENROUTER_CHAT_URL, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${env.OPENROUTER_API_KEY}`,
+        },
+        body: JSON.stringify({
+          model: DRAFT_MODEL,
+          messages: [
+            { role: 'system', content: DRAFT_SYSTEM_PROMPT },
+            { role: 'user', content: requestText },
+          ],
+          response_format: { type: 'json_object' },
+        }),
+      });
+
+      if (res.status === 429) {
+        await sleep(BASE_DELAY_MS * 2 ** attempt);
+        continue;
+      }
+
+      if (!res.ok) {
+        const text = await res.text();
+        throw new Error(`Draft model ${res.status}: ${text}`);
+      }
+
+      const data = (await res.json()) as { choices?: { message: { content: string } }[] };
+      const content = data.choices?.[0]?.message?.content;
+      if (!content) throw new Error('Draft model returned no content');
+      const draft = JSON.parse(content) as OrderDraft;
+
+      if (env.JEV_CACHE) {
+        try {
+          await env.JEV_CACHE.put(key, JSON.stringify(draft), { expirationTtl: CACHE_TTL_SECONDS });
+        } catch { /* non-fatal */ }
+      }
+
+      return draft;
+    } catch (err) {
+      if (attempt === MAX_RETRIES - 1) {
+        const msg = err instanceof Error ? err.message : 'unknown error';
+        throw new JevUnavailableError(`Draft model unavailable after ${MAX_RETRIES} attempts: ${msg}`);
+      }
+      await sleep(BASE_DELAY_MS * 2 ** attempt);
+    }
+  }
+
+  throw new JevUnavailableError('Draft model unavailable');
+}
+
+export interface IntentJudgment {
+  matchesIntent: number;
+  ambiguous: number;
+  needsReview: number;
+  estimatedCost: number;
+}
+
+/**
+ * Given a drafted order and code-computed risk state, ask Jev three bounded
+ * questions: does the draft match the request, is the request ambiguous,
+ * and should a human review it. Jev never sees raw dollar figures -- only
+ * the bucketed state the caller provides.
+ */
+export async function judgeIntent(state: Record<string, string>, env: Env): Promise<IntentJudgment> {
+  const body = {
+    model: JEV_MODEL,
+    state,
+    questions: {
+      matches_intent: {
+        type: 'noul',
+        instructions:
+          "Given the user's original request and the drafted order, does the draft plausibly match what the user asked for? Consider instrument, side, size, and any stated conditions.",
+      },
+      ambiguous: {
+        type: 'noul',
+        instructions:
+          "Is the user's original request ambiguous or underspecified -- missing a clear instrument, side, size, or price, or open to more than one reasonable reading?",
+      },
+      needs_review: {
+        type: 'noul',
+        instructions:
+          'Should a human review this draft before it is used for anything, considering its completeness, its risk figures, and how well it matches the original request?',
+      },
+    },
+  };
+
+  const key = await hashState(JSON.stringify({ intent: state }));
+
+  if (env.JEV_CACHE) {
+    try {
+      const cached = await env.JEV_CACHE.get(key, 'json');
+      if (cached) return cached as IntentJudgment;
+    } catch { /* cache miss */ }
+  }
+
+  for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
+    try {
+      const res = await fetch(JEV_URL, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${env.OPENROUTER_API_KEY}`,
+        },
+        body: JSON.stringify(body),
+      });
+
+      if (res.status === 429) {
+        await sleep(BASE_DELAY_MS * 2 ** attempt);
+        continue;
+      }
+
+      if (!res.ok) {
+        const text = await res.text();
+        throw new Error(`Jev API ${res.status}: ${text}`);
+      }
+
+      const data = (await res.json()) as JevIntentResponse;
+      const tokens = data.usage?.input_tokens ?? 0;
+      const result: IntentJudgment = {
+        matchesIntent: data.answers.matches_intent.noul,
+        ambiguous: data.answers.ambiguous.noul,
+        needsReview: data.answers.needs_review.noul,
+        estimatedCost: (tokens / 1_000_000) * COST_PER_M_INPUT,
+      };
+
+      if (env.JEV_CACHE) {
+        try {
+          await env.JEV_CACHE.put(key, JSON.stringify(result), { expirationTtl: CACHE_TTL_SECONDS });
+        } catch { /* non-fatal */ }
+      }
+
+      return result;
+    } catch (err) {
+      if (attempt === MAX_RETRIES - 1) {
+        const msg = err instanceof Error ? err.message : 'unknown error';
+        throw new JevUnavailableError(`Intent judge unavailable after ${MAX_RETRIES} attempts: ${msg}`);
+      }
+      await sleep(BASE_DELAY_MS * 2 ** attempt);
+    }
+  }
+
+  throw new JevUnavailableError('Intent judge unavailable');
 }
 
 /**

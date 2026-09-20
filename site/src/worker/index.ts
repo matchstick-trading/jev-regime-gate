@@ -2,7 +2,7 @@ import type { Env, Bar, RegimeType } from './types';
 import { getTrie } from './tickers';
 import { fetchBars } from './yahoo';
 import { encodeBar, formatState, MIN_LOOKBACK } from './encoder';
-import { classify, judgeMatch, judgeAutopsy, judgeIncident, JevUnavailableError } from './jev';
+import { classify, judgeMatch, judgeAutopsy, judgeIncident, draftIntent, judgeIntent, JevUnavailableError } from './jev';
 import { applyGate, maxProbability } from './gate';
 
 // --- CORS helpers ---
@@ -223,6 +223,39 @@ async function handleBoundary(request: Request, env: Env): Promise<Response> {
   });
 }
 
+async function handleDraft(request: Request, env: Env): Promise<Response> {
+  const body = (await request.json()) as { text?: string };
+  if (!body.text || typeof body.text !== 'string' || !body.text.trim()) {
+    return corsError('Provide {text: "..."}', 400);
+  }
+  const text = body.text.slice(0, 500);
+
+  try {
+    const draft = await draftIntent(text, env);
+    return corsJson({ draft });
+  } catch (err) {
+    if (err instanceof JevUnavailableError) {
+      return corsError('Draft model unavailable — model service did not respond', 503);
+    }
+    throw err;
+  }
+}
+
+async function handleJudgeIntent(request: Request, env: Env): Promise<Response> {
+  const body = (await request.json()) as { state?: Record<string, string> };
+  if (!body.state) return corsError('Provide {state: {...}}', 400);
+
+  try {
+    const judgment = await judgeIntent(body.state, env);
+    return corsJson(judgment, 200, { 'X-Jev-Cost': judgment.estimatedCost.toFixed(6) });
+  } catch (err) {
+    if (err instanceof JevUnavailableError) {
+      return corsError('Intent judge unavailable — model service did not respond', 503);
+    }
+    throw err;
+  }
+}
+
 async function handleHistory(url: URL, env: Env): Promise<Response> {
   const symbol = url.searchParams.get('symbol')?.toUpperCase();
   if (!symbol) return corsError('Missing ?symbol= parameter', 400);
@@ -340,6 +373,14 @@ export default {
 
       if (url.pathname === '/api/boundary' && request.method === 'POST') {
         return await handleBoundary(request, env);
+      }
+
+      if (url.pathname === '/api/draft' && request.method === 'POST') {
+        return await handleDraft(request, env);
+      }
+
+      if (url.pathname === '/api/judge-intent' && request.method === 'POST') {
+        return await handleJudgeIntent(request, env);
       }
 
       if (url.pathname === '/api/history' && request.method === 'GET') {

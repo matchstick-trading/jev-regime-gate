@@ -78,6 +78,28 @@ export interface JevIncidentResponse {
   usage?: { input_tokens: number; output_tokens: number; cost?: number };
 }
 
+export interface JevIntentResponse {
+  model: string;
+  answers: {
+    matches_intent: JevNoulAnswer;
+    ambiguous: JevNoulAnswer;
+    needs_review: JevNoulAnswer;
+  };
+  usage?: { input_tokens: number; output_tokens: number; cost?: number };
+}
+
+export interface OrderDraft {
+  instrument: string | null;
+  side: 'buy' | 'sell' | null;
+  quantity: number | null;
+  orderType: 'market' | 'limit' | 'stop';
+  limitPrice: number | null;
+  stopPrice: number | null;
+  stopLossPoints: number | null;
+  restatement: string;
+  confidence: 'high' | 'medium' | 'low';
+}
+
 // --- Worker environment bindings ---
 
 export interface Env {
