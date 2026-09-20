@@ -1,5 +1,5 @@
 export type RegimeType = 'trend_up' | 'trend_down' | 'range' | 'chop' | 'unclear';
-export type GateDecision = 'trade' | 'stand_down' | 'half_size';
+export type GateDecision = 'compatible' | 'not_compatible' | 'mixed';
 
 export interface BarFeatures {
   returns_1d: string;
@@ -12,11 +12,11 @@ export interface BarFeatures {
 
 export interface ScreenerBar {
   t: number;
-  o: number;
-  h: number;
-  l: number;
-  c: number;
-  v: number;
+  o?: number;
+  h?: number;
+  l?: number;
+  c?: number;
+  v?: number;
   regime: RegimeType;
   maxP: number;
   probs: Record<string, number>;

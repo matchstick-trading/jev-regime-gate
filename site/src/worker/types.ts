@@ -1,5 +1,5 @@
 export type RegimeType = 'trend_up' | 'trend_down' | 'range' | 'chop' | 'unclear';
-export type GateDecision = 'trade' | 'stand_down' | 'half_size';
+export type GateDecision = 'compatible' | 'not_compatible' | 'mixed';
 
 export interface BarFeatures {
   returns_1d: string;

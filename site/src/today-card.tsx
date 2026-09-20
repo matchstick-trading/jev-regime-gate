@@ -1,5 +1,5 @@
 import type { TodayResult, RegimeType } from './types';
-import { RegimeBadge, GateBadge, ConfidenceBar, FeaturePills, formatPrice } from './components';
+import { RegimeBadge, GateBadge, ConfidenceBar, FeaturePills } from './components';
 
 const REGIME_BAR_COLORS: Record<RegimeType, string> = {
   trend_up: 'bg-emerald-500',
@@ -23,8 +23,6 @@ interface TodayCardProps {
 }
 
 export function TodayCard({ result, onViewHistory }: TodayCardProps) {
-  const changePositive = result.change >= 0;
-
   return (
     <div className="w-full max-w-2xl mx-auto rounded-lg border border-border bg-surface/60 overflow-hidden">
       {/* Header */}
@@ -39,11 +37,7 @@ export function TodayCard({ result, onViewHistory }: TodayCardProps) {
           )}
         </div>
         <div className="text-right">
-          <div className="text-white font-mono text-lg">${formatPrice(result.close)}</div>
-          <div className={`font-mono text-xs ${changePositive ? 'text-emerald-400' : 'text-matchstick'}`}>
-            {changePositive ? '+' : ''}{result.change.toFixed(2)}%
-          </div>
-          <div className="text-zinc-600 text-xs font-mono mt-0.5">{result.date}</div>
+          <div className="text-zinc-600 text-xs font-mono">{result.date}</div>
         </div>
       </div>
 

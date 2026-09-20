@@ -2,7 +2,7 @@ import type { Env, Bar, RegimeType } from './types';
 import { getTrie } from './tickers';
 import { fetchBars } from './yahoo';
 import { encodeBar, formatState, MIN_LOOKBACK } from './encoder';
-import { classify } from './jev';
+import { classify, JevUnavailableError } from './jev';
 import { applyGate, maxProbability } from './gate';
 
 // --- CORS helpers ---
@@ -79,7 +79,16 @@ async function handleClassify(request: Request, env: Env): Promise<Response> {
   }
 
   const stateJson = formatState(features);
-  const { response: jev, estimatedCost } = await classify(stateJson, env);
+  let jevResult;
+  try {
+    jevResult = await classify(stateJson, env);
+  } catch (err) {
+    if (err instanceof JevUnavailableError) {
+      return corsError('Classification unavailable — model service did not respond', 503);
+    }
+    throw err;
+  }
+  const { response: jev, estimatedCost } = jevResult;
 
   const regime = jev.answers.regime_type;
   const { decision } = applyGate(jev);
@@ -138,32 +147,33 @@ async function handleHistory(url: URL, env: Env): Promise<Response> {
         const features = encodeBar(bars, i);
         if (!features) continue;
 
-        const stateJson = formatState(features);
-        const { response: jev, estimatedCost: _cost } = await classify(stateJson, env);
-
-        const regime = jev.answers.regime_type;
-        const gate = applyGate(jev);
         const bar = bars[i];
+        const stateJson = formatState(features);
 
-        const line = JSON.stringify({
-          type: 'bar',
-          t: bar.t,
-          o: bar.o,
-          h: bar.h,
-          l: bar.l,
-          c: bar.c,
-          v: bar.v,
-          regime: regime.choice as RegimeType,
-          maxP: Math.round(maxProbability(regime.probabilities) * 100) / 100,
-          probs: regime.probabilities,
-          changeLikely: Math.round(jev.answers.regime_change_likely.noul * 100) / 100,
-          viable: Math.round(jev.answers.strategy_viable.noul * 100) / 100,
-          gate: gate.decision,
-          size: gate.sizeFactor,
-          feat: features,
-        });
+        try {
+          const { response: jev } = await classify(stateJson, env);
+          const regime = jev.answers.regime_type;
+          const gate = applyGate(jev);
 
-        await writer.write(encoder.encode(line + '\n'));
+          const line = JSON.stringify({
+            type: 'bar',
+            t: bar.t,
+            regime: regime.choice as RegimeType,
+            maxP: Math.round(maxProbability(regime.probabilities) * 100) / 100,
+            probs: regime.probabilities,
+            changeLikely: Math.round(jev.answers.regime_change_likely.noul * 100) / 100,
+            viable: Math.round(jev.answers.strategy_viable.noul * 100) / 100,
+            gate: gate.decision,
+            size: gate.sizeFactor,
+            feat: features,
+          });
+
+          await writer.write(encoder.encode(line + '\n'));
+        } catch {
+          await writer.write(
+            encoder.encode(JSON.stringify({ type: 'error', t: bar.t, message: 'classification unavailable' }) + '\n'),
+          );
+        }
       }
     } catch (err) {
       console.error('Stream error:', err instanceof Error ? err.message : err);

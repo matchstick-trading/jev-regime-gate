@@ -7,21 +7,11 @@ const MAX_RETRIES = 3;
 const BASE_DELAY_MS = 2000;
 const CACHE_TTL_SECONDS = 86400; // 24 hours
 
-function defaultResponse(): JevResponse {
-  return {
-    model: JEV_MODEL,
-    answers: {
-      regime_type: {
-        type: 'choice',
-        choice: 'unclear',
-        probabilities: { trend_up: 0.2, trend_down: 0.2, range: 0.2, chop: 0.2, unclear: 0.2 },
-        confidence: 0.2,
-      },
-      regime_change_likely: { type: 'noul', noul: 0.5 },
-      strategy_viable: { type: 'noul', noul: 0.5 },
-    },
-    usage: { input_tokens: 0, output_tokens: 0 },
-  };
+export class JevUnavailableError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'JevUnavailableError';
+  }
 }
 
 function buildBody(state: Record<string, string>) {
@@ -136,12 +126,12 @@ export async function classify(
       return { response: data, estimatedCost };
     } catch (err) {
       if (attempt === MAX_RETRIES - 1) {
-        console.error(`Jev API failed after ${MAX_RETRIES} attempts, using default`);
-        return { response: defaultResponse(), estimatedCost: 0 };
+        const msg = err instanceof Error ? err.message : 'unknown error';
+        throw new JevUnavailableError(`Classification unavailable after ${MAX_RETRIES} attempts: ${msg}`);
       }
       await sleep(BASE_DELAY_MS * 2 ** attempt);
     }
   }
 
-  return { response: defaultResponse(), estimatedCost: 0 };
+  throw new JevUnavailableError('Classification unavailable');
 }

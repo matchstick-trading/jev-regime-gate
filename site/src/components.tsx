@@ -13,9 +13,9 @@ const REGIME_COLORS: Record<RegimeType, { bg: string; text: string; label: strin
 };
 
 const GATE_COLORS: Record<GateDecision, { bg: string; text: string; label: string }> = {
-  trade: { bg: 'bg-emerald-500/15', text: 'text-emerald-400', label: 'Trade' },
-  half_size: { bg: 'bg-amber-500/15', text: 'text-amber-400', label: 'Half' },
-  stand_down: { bg: 'bg-zinc-600/15', text: 'text-zinc-500', label: 'Stand Down' },
+  compatible: { bg: 'bg-emerald-500/15', text: 'text-emerald-400', label: 'Compatible' },
+  mixed: { bg: 'bg-amber-500/15', text: 'text-amber-400', label: 'Mixed' },
+  not_compatible: { bg: 'bg-zinc-600/15', text: 'text-zinc-500', label: 'Not Compatible' },
 };
 
 export function RegimeBadge({ regime }: { regime: RegimeType }) {
@@ -30,7 +30,7 @@ export function RegimeBadge({ regime }: { regime: RegimeType }) {
 }
 
 export function GateBadge({ gate }: { gate: GateDecision }) {
-  const c = GATE_COLORS[gate] ?? GATE_COLORS.stand_down;
+  const c = GATE_COLORS[gate] ?? GATE_COLORS.not_compatible;
   return (
     <span
       className={`inline-block px-1.5 py-0.5 rounded text-[10px] uppercase font-semibold tracking-wide ${c.bg} ${c.text}`}

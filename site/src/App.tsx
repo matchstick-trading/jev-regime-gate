@@ -1,6 +1,6 @@
 import { useState, useCallback } from 'react';
 import type { TodayResult, ScreenerBar, RawBar, LoadingState, HistoryRange } from './types';
-import { RegimeBadge, GateBadge, ConfidenceBar, FeaturePills, formatPrice } from './components';
+import { RegimeBadge, GateBadge, ConfidenceBar, FeaturePills } from './components';
 import { SymbolSearch, QuickPicks } from './search';
 import { TodayCard, TodayCardSkeleton } from './today-card';
 import { BYOD } from './byod';
@@ -16,15 +16,18 @@ function formatDate(ts: number): string {
   });
 }
 
-function formatVolume(v: number): string {
-  if (v >= 1_000_000) return (v / 1_000_000).toFixed(1) + 'M';
-  if (v >= 1_000) return (v / 1_000).toFixed(0) + 'K';
-  return String(v);
-}
+const DISCLOSURE =
+  'Experimental research output—not investment advice or a recommendation to buy, sell, hold, or size a position. ' +
+  'This tool classifies bucketed patterns in recent end-of-day data. Percentages are model-output scores for the stated questions, ' +
+  'not calibrated probabilities of future price movement, profit, or loss. ' +
+  'Outputs may be inaccurate, stale, incomplete, or unavailable and should not be used as the basis for a trade.';
 
-function pctChange(bar: ScreenerBar, prev?: ScreenerBar): number | null {
-  if (!prev) return null;
-  return ((bar.c - prev.c) / prev.c) * 100;
+function Disclosure() {
+  return (
+    <p className="text-[10px] leading-relaxed text-zinc-600 max-w-2xl mx-auto mt-3">
+      {DISCLOSURE}
+    </p>
+  );
 }
 
 /* ── App ── */
@@ -191,6 +194,7 @@ export default function App() {
         {today && loading !== 'classifying' && (
           <div className="mt-6">
             <TodayCard result={today} onViewHistory={handleViewHistory} />
+            <Disclosure />
           </div>
         )}
 
@@ -242,6 +246,7 @@ export default function App() {
             </div>
 
             <HistoryGrid bars={history} expanded={expanded} setExpanded={setExpanded} />
+            <Disclosure />
           </div>
         )}
 
@@ -258,9 +263,9 @@ export default function App() {
             </div>
             <div>
               <span className="text-zinc-400 font-medium">Gates: </span>
-              <GateBadge gate="trade" />{' '}
-              <GateBadge gate="half_size" />{' '}
-              <GateBadge gate="stand_down" />
+              <GateBadge gate="compatible" />{' '}
+              <GateBadge gate="mixed" />{' '}
+              <GateBadge gate="not_compatible" />
             </div>
             <div className="sm:ml-auto">
               <span className="text-zinc-400 font-medium">Conf</span> = max probability from Jev distribution
@@ -312,13 +317,10 @@ function HistoryGrid({
 
   return (
     <div className="rounded-lg border border-border overflow-x-auto">
-      <table className="w-full text-sm min-w-[700px]">
+      <table className="w-full text-sm min-w-[540px]">
         <thead>
           <tr className="bg-surface text-zinc-500 text-xs uppercase tracking-wider">
             <th className="px-3 py-2.5 text-left font-medium">Date</th>
-            <th className="px-3 py-2.5 text-right font-medium">Close</th>
-            <th className="px-3 py-2.5 text-right font-medium">Chg%</th>
-            <th className="px-3 py-2.5 text-right font-medium">Vol</th>
             <th className="px-3 py-2.5 text-center font-medium">Regime</th>
             <th className="px-3 py-2.5 text-center font-medium">Conf</th>
             <th className="px-3 py-2.5 text-center font-medium">Change?</th>
@@ -327,16 +329,13 @@ function HistoryGrid({
           </tr>
         </thead>
         <tbody className="divide-y divide-border/50">
-          {sorted.map((bar, i) => {
-            const prevBar = i < sorted.length - 1 ? sorted[i + 1] : undefined;
-            const chg = pctChange(bar, prevBar);
+          {sorted.map((bar) => {
             const isExpanded = expanded === bar.t;
 
             return (
               <ScreenerRow
                 key={bar.t}
                 bar={bar}
-                chg={chg}
                 isExpanded={isExpanded}
                 onToggle={() => setExpanded(isExpanded ? null : bar.t)}
               />
@@ -352,12 +351,10 @@ function HistoryGrid({
 
 function ScreenerRow({
   bar,
-  chg,
   isExpanded,
   onToggle,
 }: {
   bar: ScreenerBar;
-  chg: number | null;
   isExpanded: boolean;
   onToggle: () => void;
 }) {
@@ -368,20 +365,6 @@ function ScreenerRow({
         onClick={onToggle}
       >
         <td className="px-3 py-2 text-zinc-400 font-mono text-xs">{formatDate(bar.t)}</td>
-        <td className="px-3 py-2 text-right text-white font-mono">${formatPrice(bar.c)}</td>
-        <td className="px-3 py-2 text-right font-mono">
-          {chg !== null ? (
-            <span className={chg >= 0 ? 'text-emerald-400' : 'text-matchstick'}>
-              {chg >= 0 ? '+' : ''}
-              {chg.toFixed(2)}%
-            </span>
-          ) : (
-            <span className="text-zinc-600">&mdash;</span>
-          )}
-        </td>
-        <td className="px-3 py-2 text-right text-zinc-500 font-mono text-xs">
-          {formatVolume(bar.v)}
-        </td>
         <td className="px-3 py-2 text-center">
           <RegimeBadge regime={bar.regime} />
         </td>
@@ -404,7 +387,7 @@ function ScreenerRow({
       </tr>
       {isExpanded && (
         <tr className="bg-zinc-900/80">
-          <td colSpan={9} className="px-4 py-3">
+          <td colSpan={6} className="px-4 py-3">
             <div className="flex flex-wrap gap-6 text-xs">
               <div>
                 <div className="text-zinc-500 mb-1 uppercase tracking-wider font-medium">
@@ -424,14 +407,6 @@ function ScreenerRow({
                         {regime.replace('_', ' ')}: {(prob * 100).toFixed(0)}%
                       </span>
                     ))}
-                </div>
-              </div>
-              <div>
-                <div className="text-zinc-500 mb-1 uppercase tracking-wider font-medium">
-                  OHLCV
-                </div>
-                <div className="font-mono text-zinc-400">
-                  O:{formatPrice(bar.o)} H:{formatPrice(bar.h)} L:{formatPrice(bar.l)} C:{formatPrice(bar.c)}
                 </div>
               </div>
             </div>
