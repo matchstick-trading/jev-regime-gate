@@ -33,3 +33,38 @@ export interface ScreenerFeed {
   vendor: string;
   bars: ScreenerBar[];
 }
+
+/* --- Progressive screener types --- */
+
+export interface SearchResult {
+  symbol: string;
+  name: string;
+}
+
+export interface TodayResult {
+  symbol: string;
+  name: string;
+  date: string;
+  close: number;
+  change: number;
+  regime: RegimeType;
+  maxP: number;
+  probs: Record<string, number>;
+  changeLikely: number;
+  viable: number;
+  gate: GateDecision;
+  features: BarFeatures;
+}
+
+/** Raw OHLCV bar for BYOD uploads */
+export interface RawBar {
+  t: number;
+  o: number;
+  h: number;
+  l: number;
+  c: number;
+  v: number;
+}
+
+export type LoadingState = 'idle' | 'searching' | 'classifying' | 'history';
+export type HistoryRange = '1y' | '3y';
