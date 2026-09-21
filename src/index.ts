@@ -9,7 +9,7 @@ import type {
   GateDecision,
 } from './types.js';
 import { encodeBar, formatState, MIN_LOOKBACK } from './encoder.js';
-import { classify, getCostSummary } from './jev-client.js';
+import { classify, getCostSummary, JevUnavailableError } from './jev-client.js';
 import { applyGate } from './gate.js';
 import { runBacktest } from './backtest.js';
 import { fetchSPY } from './fetch-data.js';
@@ -88,6 +88,7 @@ async function main() {
   const gateDecisions: Map<number, { decision: GateDecision; sizeFactor: number }> = new Map();
   let apiCalls = 0;
   let cacheHits = 0;
+  let unavailableCount = 0;
 
   for (let i = MIN_LOOKBACK; i < bars.length; i++) {
     const features = encodeBar(bars, i);
@@ -96,46 +97,54 @@ async function main() {
     (bars[i].meta as Record<string, unknown>).features = features;
 
     const state = formatState(features);
-    let jevResponse: JevResponse;
+    let jevResponse: JevResponse | null = null;
+    let unavailableReason: string | null = null;
 
     if (apiKey) {
-      jevResponse = await classify(state, config.strategy, apiKey);
-      apiCalls++;
+      try {
+        jevResponse = await classify(state, config.strategy, apiKey);
+        apiCalls++;
+      } catch (err) {
+        if (!(err instanceof JevUnavailableError)) throw err;
+        unavailableReason = err.message;
+      }
     } else {
-      jevResponse = {
-        model: 'typesafe/jev-1.13',
-        answers: {
-          regime_type: {
-            type: 'choice',
-            choice: 'unclear',
-            probabilities: { trend_up: 0.2, trend_down: 0.2, range: 0.2, chop: 0.2, unclear: 0.2 },
-            confidence: 0.2,
-          },
-          regime_change_likely: { type: 'noul', noul: 0.5 },
-          strategy_viable: { type: 'noul', noul: 0.5 },
-        },
-        usage: { input_tokens: 0, output_tokens: 0 },
-      };
+      unavailableReason = 'no OPENROUTER_API_KEY configured';
     }
 
-    const gate = applyGate(jevResponse, config);
-    gateDecisions.set(i, gate);
+    if (jevResponse) {
+      const gate = applyGate(jevResponse, config);
+      gateDecisions.set(i, gate);
 
-    const probabilities = jevResponse.answers.regime_type.probabilities;
-    const maxP = Math.max(...Object.values(probabilities));
+      const probabilities = jevResponse.answers.regime_type.probabilities;
+      const maxP = Math.max(...Object.values(probabilities));
 
-    const jevMeta: JevMeta = {
-      regime_type: jevResponse.answers.regime_type.choice,
-      regime_probabilities: probabilities,
-      regime_max_p: maxP,
-      regime_change_likely: jevResponse.answers.regime_change_likely.noul,
-      strategy_viable: jevResponse.answers.strategy_viable.noul,
-      gate_decision: gate.decision,
-      size_factor: gate.sizeFactor,
-      input_tokens: jevResponse.usage?.input_tokens,
-    };
+      const jevMeta: JevMeta = {
+        regime_type: jevResponse.answers.regime_type.choice,
+        regime_probabilities: probabilities,
+        regime_max_p: maxP,
+        regime_change_likely: jevResponse.answers.regime_change_likely.noul,
+        strategy_viable: jevResponse.answers.strategy_viable.noul,
+        gate_decision: gate.decision,
+        size_factor: gate.sizeFactor,
+        input_tokens: jevResponse.usage?.input_tokens,
+      };
 
-    (bars[i].meta as Record<string, unknown>).jev = jevMeta;
+      (bars[i].meta as Record<string, unknown>).jev = jevMeta;
+    } else {
+      // No real classification was obtained -- stand down rather than trade on
+      // an unavailable signal, and record an explicit unavailable marker.
+      // Never write a plausible-looking regime/probability/confidence object
+      // (and never a `model` tag) for a result that isn't a real classification.
+      unavailableCount++;
+      gateDecisions.set(i, { decision: 'stand_down', sizeFactor: 0 });
+      (bars[i].meta as Record<string, unknown>).jev = {
+        status: 'unavailable',
+        reason: unavailableReason,
+        gate_decision: 'stand_down',
+        size_factor: 0,
+      };
+    }
   }
 
   const ungated = runBacktest(bars, 'Ungated SMA 20/50', () => ({
@@ -152,9 +161,14 @@ async function main() {
   const cost = getCostSummary();
   if (cost.totalInputTokens > 0) {
     console.log(`\nJev API: ${apiCalls} calls, ${cost.totalInputTokens} input tokens, $${cost.estimatedCost.toFixed(4)} estimated cost`);
-  } else if (!apiKey) {
-    console.log('\nNo OPENROUTER_API_KEY set — ran with default (uniform) Jev responses.');
+  }
+  if (!apiKey) {
+    console.log('\nNo OPENROUTER_API_KEY set — no bars were classified. Each bar is marked');
+    console.log('jev: { status: "unavailable" } and gated to stand_down (no fabricated regime data).');
     console.log('Add your key to .env to get real regime classifications.');
+  } else if (unavailableCount > 0) {
+    console.log(`\n${unavailableCount} bar(s) could not be classified (Jev API unavailable) and were`);
+    console.log('marked jev: { status: "unavailable" } and gated to stand_down.');
   }
 
   const classifiedFeed: OpenCandleFeed = { ...feed, candles: bars };
