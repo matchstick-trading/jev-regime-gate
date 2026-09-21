@@ -2,7 +2,16 @@ import type { Env, Bar, RegimeType } from './types';
 import { getTrie } from './tickers';
 import { fetchBars } from './yahoo';
 import { encodeBar, formatState, MIN_LOOKBACK } from './encoder';
-import { classify, judgeMatch, judgeAutopsy, judgeIncident, draftIntent, judgeIntent, JevUnavailableError } from './jev';
+import {
+  classify,
+  judgeMatch,
+  judgeAutopsy,
+  judgeIncident,
+  draftIntent,
+  judgeIntent,
+  JevUnavailableError,
+  FIXTURE_CACHE_TTL_SECONDS,
+} from './jev';
 import { applyGate, maxProbability } from './gate';
 
 // --- CORS helpers ---
@@ -128,7 +137,7 @@ async function handleJudge(request: Request, env: Env): Promise<Response> {
   }
 
   try {
-    const result = await judgeMatch(body.question, body.state, env);
+    const result = await judgeMatch(body.question, body.state, env, FIXTURE_CACHE_TTL_SECONDS);
     return corsJson(result, 200, {
       'X-Jev-Cost': result.estimatedCost.toFixed(6),
     });
@@ -150,7 +159,7 @@ async function handleAutopsy(request: Request, env: Env): Promise<Response> {
   }
 
   try {
-    const result = await judgeAutopsy(body.state, env);
+    const result = await judgeAutopsy(body.state, env, FIXTURE_CACHE_TTL_SECONDS);
     return corsJson(result, 200, {
       'X-Jev-Cost': result.estimatedCost.toFixed(6),
     });
@@ -172,7 +181,7 @@ async function handleIncident(request: Request, env: Env): Promise<Response> {
   }
 
   try {
-    const result = await judgeIncident(body.state, env);
+    const result = await judgeIncident(body.state, env, FIXTURE_CACHE_TTL_SECONDS);
     return corsJson(result, 200, {
       'X-Jev-Cost': result.estimatedCost.toFixed(6),
     });
@@ -200,14 +209,14 @@ async function handleBoundary(request: Request, env: Env): Promise<Response> {
 
   let jevResult;
   try {
-    jevResult = await classify(JSON.stringify(state), env);
+    jevResult = await classify(JSON.stringify(state), env, FIXTURE_CACHE_TTL_SECONDS);
   } catch (err) {
     if (err instanceof JevUnavailableError) {
       return corsError('Classification unavailable — model service did not respond', 503);
     }
     throw err;
   }
-  const { response: jev, estimatedCost } = jevResult;
+  const { response: jev, estimatedCost, cache, generatedAt } = jevResult;
   const regime = jev.answers.regime_type;
 
   const result = {
@@ -216,6 +225,8 @@ async function handleBoundary(request: Request, env: Env): Promise<Response> {
     maxP: Math.round(maxProbability(regime.probabilities) * 100) / 100,
     changeLikely: Math.round(jev.answers.regime_change_likely.noul * 100) / 100,
     viable: Math.round(jev.answers.strategy_viable.noul * 100) / 100,
+    cache,
+    generatedAt,
   };
 
   return corsJson(result, 200, {

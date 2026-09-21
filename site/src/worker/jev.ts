@@ -7,12 +7,77 @@ const DRAFT_MODEL = 'openai/gpt-4o-mini';
 const COST_PER_M_INPUT = 0.042;
 const MAX_RETRIES = 3;
 const BASE_DELAY_MS = 2000;
-const CACHE_TTL_SECONDS = 86400; // 24 hours
+const CACHE_TTL_SECONDS = 86400; // 24 hours -- keeps real market-data routes honest per experiment-service-degradation-spec.md L161.
+
+/**
+ * Hypothesis, not a decided number (vaults.DEV-2026-09-278): 90 days is "clearly long" for the
+ * four fixture-backed plays (Find the Moment, Backtest Autopsy, Market Data Incident Lab, Decision
+ * Boundary Lab) whose inputs are frozen synthetic fixtures that never change. Shorten/lengthen freely.
+ */
+export const FIXTURE_CACHE_TTL_SECONDS = 60 * 60 * 24 * 90; // 90 days
+
+/** Bump this to deliberately invalidate old cache entries after a response-shape change. */
+const CACHE_SCHEMA_VERSION = 1;
 
 export class JevUnavailableError extends Error {
   constructor(message: string) {
     super(message);
     this.name = 'JevUnavailableError';
+  }
+}
+
+/** Envelope wrapping every KV-cached value with disclosure metadata (vaults.DEV-2026-09-278). */
+interface CacheEnvelope<T> {
+  value: T;
+  generatedAt: string;
+  model: string;
+  schemaVersion: number;
+}
+
+function isCacheEnvelope<T>(entry: unknown): entry is CacheEnvelope<T> {
+  if (typeof entry !== 'object' || entry === null) return false;
+  const candidate = entry as Record<string, unknown>;
+  return (
+    'value' in candidate &&
+    typeof candidate.generatedAt === 'string' &&
+    candidate.schemaVersion !== undefined
+  );
+}
+
+/**
+ * Read an enveloped KV entry. A missing key, a KV error, or a pre-rollout raw (un-enveloped) entry
+ * all return `null` -- treated as a cache miss, not a crash. This is a one-time deploy-transition
+ * guard (existing 24h-TTL raw entries will all expire within a day of deploy regardless), not a
+ * standing backward-compatibility shim.
+ */
+async function readCacheEnvelope<T>(cache: KVNamespace, key: string): Promise<CacheEnvelope<T> | null> {
+  try {
+    const cached = await cache.get(key, 'json');
+    if (cached && isCacheEnvelope<T>(cached)) return cached;
+    return null;
+  } catch {
+    return null;
+  }
+}
+
+/** Write a value to KV wrapped in the disclosure envelope. Non-fatal on failure. */
+async function writeCacheEnvelope<T>(
+  cache: KVNamespace,
+  key: string,
+  value: T,
+  generatedAt: string,
+  ttlSeconds: number,
+): Promise<void> {
+  try {
+    const envelope: CacheEnvelope<T> = {
+      value,
+      generatedAt,
+      model: JEV_MODEL,
+      schemaVersion: CACHE_SCHEMA_VERSION,
+    };
+    await cache.put(key, JSON.stringify(envelope), { expirationTtl: ttlSeconds });
+  } catch {
+    // non-fatal
   }
 }
 
@@ -61,17 +126,22 @@ function sleep(ms: number): Promise<void> {
 export interface ClassifyResult {
   response: JevResponse;
   estimatedCost: number;
+  cache: 'hit' | 'miss';
+  generatedAt: string;
 }
 
 export interface JudgeResult {
   score: number;
   estimatedCost: number;
+  cache: 'hit' | 'miss';
+  generatedAt: string;
 }
 
 export async function judgeMatch(
   question: string,
   state: Record<string, string>,
   env: Env,
+  ttlSeconds: number = CACHE_TTL_SECONDS,
 ): Promise<JudgeResult> {
   const body = {
     model: JEV_MODEL,
@@ -88,10 +158,10 @@ export async function judgeMatch(
   const key = await hashState(stateKey);
 
   if (env.JEV_CACHE) {
-    try {
-      const cached = await env.JEV_CACHE.get(key, 'json');
-      if (cached) return cached as JudgeResult;
-    } catch { /* cache miss */ }
+    const envelope = await readCacheEnvelope<Omit<JudgeResult, 'cache' | 'generatedAt'>>(env.JEV_CACHE, key);
+    if (envelope) {
+      return { ...envelope.value, cache: 'hit', generatedAt: envelope.generatedAt };
+    }
   }
 
   for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
@@ -117,15 +187,22 @@ export async function judgeMatch(
 
       const data = (await res.json()) as { answers: { episode_match: { noul: number } }; usage?: { input_tokens: number } };
       const tokens = data.usage?.input_tokens ?? 0;
+      const generatedAt = new Date().toISOString();
       const result: JudgeResult = {
         score: data.answers.episode_match.noul,
         estimatedCost: (tokens / 1_000_000) * COST_PER_M_INPUT,
+        cache: 'miss',
+        generatedAt,
       };
 
       if (env.JEV_CACHE) {
-        try {
-          await env.JEV_CACHE.put(key, JSON.stringify(result), { expirationTtl: CACHE_TTL_SECONDS });
-        } catch { /* non-fatal */ }
+        await writeCacheEnvelope(
+          env.JEV_CACHE,
+          key,
+          { score: result.score, estimatedCost: result.estimatedCost },
+          generatedAt,
+          ttlSeconds,
+        );
       }
 
       return result;
@@ -161,11 +238,14 @@ export interface AutopsyResult {
   probabilities: Record<string, number>;
   confidence: number;
   estimatedCost: number;
+  cache: 'hit' | 'miss';
+  generatedAt: string;
 }
 
 export async function judgeAutopsy(
   state: Record<string, string>,
   env: Env,
+  ttlSeconds: number = CACHE_TTL_SECONDS,
 ): Promise<AutopsyResult> {
   const body = {
     model: JEV_MODEL,
@@ -183,10 +263,10 @@ export async function judgeAutopsy(
   const key = await hashState(JSON.stringify({ autopsy: state }));
 
   if (env.JEV_CACHE) {
-    try {
-      const cached = await env.JEV_CACHE.get(key, 'json');
-      if (cached) return cached as AutopsyResult;
-    } catch { /* cache miss */ }
+    const envelope = await readCacheEnvelope<Omit<AutopsyResult, 'cache' | 'generatedAt'>>(env.JEV_CACHE, key);
+    if (envelope) {
+      return { ...envelope.value, cache: 'hit', generatedAt: envelope.generatedAt };
+    }
   }
 
   for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
@@ -213,17 +293,29 @@ export async function judgeAutopsy(
       const data = (await res.json()) as JevAutopsyResponse;
       const tokens = data.usage?.input_tokens ?? 0;
       const answer = data.answers.failure_family;
+      const generatedAt = new Date().toISOString();
       const result: AutopsyResult = {
         family: answer.choice,
         probabilities: answer.probabilities,
         confidence: answer.confidence,
         estimatedCost: (tokens / 1_000_000) * COST_PER_M_INPUT,
+        cache: 'miss',
+        generatedAt,
       };
 
       if (env.JEV_CACHE) {
-        try {
-          await env.JEV_CACHE.put(key, JSON.stringify(result), { expirationTtl: CACHE_TTL_SECONDS });
-        } catch { /* non-fatal */ }
+        await writeCacheEnvelope(
+          env.JEV_CACHE,
+          key,
+          {
+            family: result.family,
+            probabilities: result.probabilities,
+            confidence: result.confidence,
+            estimatedCost: result.estimatedCost,
+          },
+          generatedAt,
+          ttlSeconds,
+        );
       }
 
       return result;
@@ -259,11 +351,14 @@ export interface IncidentResult {
   probabilities: Record<string, number>;
   confidence: number;
   estimatedCost: number;
+  cache: 'hit' | 'miss';
+  generatedAt: string;
 }
 
 export async function judgeIncident(
   state: Record<string, string>,
   env: Env,
+  ttlSeconds: number = CACHE_TTL_SECONDS,
 ): Promise<IncidentResult> {
   const body = {
     model: JEV_MODEL,
@@ -281,10 +376,10 @@ export async function judgeIncident(
   const key = await hashState(JSON.stringify({ incident: state }));
 
   if (env.JEV_CACHE) {
-    try {
-      const cached = await env.JEV_CACHE.get(key, 'json');
-      if (cached) return cached as IncidentResult;
-    } catch { /* cache miss */ }
+    const envelope = await readCacheEnvelope<Omit<IncidentResult, 'cache' | 'generatedAt'>>(env.JEV_CACHE, key);
+    if (envelope) {
+      return { ...envelope.value, cache: 'hit', generatedAt: envelope.generatedAt };
+    }
   }
 
   for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
@@ -311,17 +406,29 @@ export async function judgeIncident(
       const data = (await res.json()) as JevIncidentResponse;
       const tokens = data.usage?.input_tokens ?? 0;
       const answer = data.answers.incident_family;
+      const generatedAt = new Date().toISOString();
       const result: IncidentResult = {
         family: answer.choice,
         probabilities: answer.probabilities,
         confidence: answer.confidence,
         estimatedCost: (tokens / 1_000_000) * COST_PER_M_INPUT,
+        cache: 'miss',
+        generatedAt,
       };
 
       if (env.JEV_CACHE) {
-        try {
-          await env.JEV_CACHE.put(key, JSON.stringify(result), { expirationTtl: CACHE_TTL_SECONDS });
-        } catch { /* non-fatal */ }
+        await writeCacheEnvelope(
+          env.JEV_CACHE,
+          key,
+          {
+            family: result.family,
+            probabilities: result.probabilities,
+            confidence: result.confidence,
+            estimatedCost: result.estimatedCost,
+          },
+          generatedAt,
+          ttlSeconds,
+        );
       }
 
       return result;
@@ -517,23 +624,25 @@ export async function judgeIntent(state: Record<string, string>, env: Env): Prom
 
 /**
  * Send bar features to the Jev decision API and return the regime
- * classification. Results are cached in KV for 24 hours.
+ * classification. Results are cached in KV.
+ *
+ * `ttlSeconds` defaults to the 24h `CACHE_TTL_SECONDS` -- correct for the two real-market-data call
+ * sites (`/api/classify`, `/api/history`), which must never label stale EOD data as current
+ * (experiment-service-degradation-spec.md L161). The `/api/boundary` call site (Decision Boundary
+ * Lab, synthetic/frozen input) passes `FIXTURE_CACHE_TTL_SECONDS` explicitly instead.
  */
 export async function classify(
   stateJson: string,
   env: Env,
+  ttlSeconds: number = CACHE_TTL_SECONDS,
 ): Promise<ClassifyResult> {
   const key = await hashState(stateJson);
 
   // Check KV cache first.
   if (env.JEV_CACHE) {
-    try {
-      const cached = await env.JEV_CACHE.get(key, 'json');
-      if (cached) {
-        return { response: cached as JevResponse, estimatedCost: 0 };
-      }
-    } catch {
-      // KV miss or error — continue to API call.
+    const envelope = await readCacheEnvelope<JevResponse>(env.JEV_CACHE, key);
+    if (envelope) {
+      return { response: envelope.value, estimatedCost: 0, cache: 'hit', generatedAt: envelope.generatedAt };
     }
   }
 
@@ -565,19 +674,14 @@ export async function classify(
       const data = (await res.json()) as JevResponse;
       const tokens = data.usage?.input_tokens ?? 0;
       const estimatedCost = (tokens / 1_000_000) * COST_PER_M_INPUT;
+      const generatedAt = new Date().toISOString();
 
       // Write to KV cache (fire-and-forget).
       if (env.JEV_CACHE) {
-        try {
-          await env.JEV_CACHE.put(key, JSON.stringify(data), {
-            expirationTtl: CACHE_TTL_SECONDS,
-          });
-        } catch {
-          // Non-fatal — cache write failure should not block the response.
-        }
+        await writeCacheEnvelope(env.JEV_CACHE, key, data, generatedAt, ttlSeconds);
       }
 
-      return { response: data, estimatedCost };
+      return { response: data, estimatedCost, cache: 'miss', generatedAt };
     } catch (err) {
       if (attempt === MAX_RETRIES - 1) {
         const msg = err instanceof Error ? err.message : 'unknown error';
