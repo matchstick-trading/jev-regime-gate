@@ -47,8 +47,25 @@ function saveCache(): void {
   writeFileSync(CACHE_PATH, JSON.stringify(cache, null, 2));
 }
 
-function hashState(state: string): string {
-  return createHash('sha256').update(state).digest('hex');
+/**
+ * Cache key covers the exact request body (state + strategy + model +
+ * question wording), not state alone.
+ *
+ * Found auditing against the "Jev Engineering" review's cache-key guidance
+ * (sec 9.2: "A cache key should include the evidence identity, question
+ * version, and model version where those affect the result"): the previous
+ * key was `hash(state)` only, but `buildBody`'s `strategy_viable` question
+ * embeds `strategyName` in its instructions text -- classify() called with
+ * the same market state for two different strategies (the normal case for
+ * a strategy backtester re-run against overlapping historical bars) would
+ * silently return the FIRST strategy's cached `strategy_viable` answer for
+ * the second. Hashing the full constructed body fixes that collision and,
+ * as a side effect, also invalidates the cache automatically if JEV_MODEL
+ * or the question wording ever changes -- no separate version counter to
+ * remember to bump.
+ */
+function hashBody(body: unknown): string {
+  return createHash('sha256').update(JSON.stringify(body)).digest('hex');
 }
 
 function buildBody(state: string, strategyName: string) {
@@ -89,13 +106,12 @@ export async function classify(
   apiKey: string,
 ): Promise<JevResponse> {
   loadCache();
-  const key = hashState(state);
+  const body = buildBody(state, strategyName);
+  const key = hashBody(body);
 
   if (cache[key]) {
     return cache[key].response;
   }
-
-  const body = buildBody(state, strategyName);
 
   for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
     try {

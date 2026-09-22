@@ -32,6 +32,22 @@ export interface JevChoiceAnswer {
   type: 'choice';
   choice: string;
   probabilities: Record<string, number>;
+  /**
+   * NOT the raw probability of `choice`. Measured directly against this same
+   * endpoint (openrouter.ai/api/alpha/decisions, model typesafe/jev-1.13) in
+   * the sibling power-spec-directory project (2026-09-21, across 5 recorded
+   * decisions x 5 Choice questions): this field is a chance-corrected
+   * agreement index, confidence = (p_max - 1/k) / (1 - 1/k), where k is the
+   * option count -- not probabilities[choice]. A fixed threshold compared
+   * against it is therefore k-dependent: the same threshold is stricter on
+   * `regime_type` (5 options) than it would be on a 2-option question. If
+   * this ever gates a real decision (today it is display-only -- see
+   * site/src/worker/jev.ts's pass-through to the frontend), compare against
+   * `probabilities[choice]` directly instead of this field, per the
+   * "Jev Engineering" review's guidance (sec 3.4): "A threshold becomes
+   * useful only after its observed error and coverage are measured on the
+   * application."
+   */
   confidence: number;
 }
 
