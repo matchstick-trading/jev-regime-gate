@@ -16,6 +16,7 @@ const GATE_COLORS: Record<GateDecision, { bg: string; text: string; label: strin
   compatible: { bg: 'bg-emerald-500/15', text: 'text-emerald-400', label: 'Compatible' },
   mixed: { bg: 'bg-amber-500/15', text: 'text-amber-400', label: 'Mixed' },
   not_compatible: { bg: 'bg-zinc-600/15', text: 'text-zinc-500', label: 'Not Compatible' },
+  offline: { bg: 'bg-zinc-600/15', text: 'text-zinc-500', label: 'Gate offline' },
 };
 
 export function RegimeBadge({ regime }: { regime: RegimeType }) {
