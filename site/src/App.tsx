@@ -336,9 +336,7 @@ export default function App() {
             </div>
             <div>
               <span className="text-zinc-400 font-medium">Gates: </span>
-              <GateBadge gate="compatible" />{' '}
-              <GateBadge gate="mixed" />{' '}
-              <GateBadge gate="not_compatible" />
+              <GateBadge gate="offline" />
             </div>
             <div className="sm:ml-auto">
               <span className="text-zinc-400 font-medium">Conf</span> = max probability from Jev distribution

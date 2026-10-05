@@ -9,7 +9,14 @@ export function maxProbability(probabilities: Record<string, number>): number {
   return Math.max(...Object.values(probabilities));
 }
 
+// DEV-308 (2026-10-04): the trade-compatibility gate is offline while counsel reviews it
+// (CFTC guardrail: position-sizing output must not look like directing accounts, and this
+// tool covers equities). To restore it, set this to true (or revert the DEV-308 commit)
+// and redeploy. The regime classification itself is unchanged.
+export const GATE_ENABLED = false;
+
 export function applyGate(jev: JevResponse): GateResult {
+  if (!GATE_ENABLED) return { decision: 'offline', sizeFactor: 0 };
   const regime = jev.answers.regime_type;
   const regimeType = regime.choice as RegimeType;
   const maxP = maxProbability(regime.probabilities);
